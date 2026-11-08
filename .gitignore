@@ -1,3 +1,6 @@
-work/
+work/*
+!work/engine.test.js
+!work/online-server.test.js
+!work/ui-smoke.test.js
 .env
 *.log
