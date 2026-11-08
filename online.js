@@ -390,6 +390,22 @@
     }
   }
 
+  async function restoreFragmentSession(token) {
+    state.token = token;
+    try {
+      const payload = await requestJson(
+        `/api/rooms/${state.roomCode}/join`,
+        { token }
+      );
+      saveSession(state.roomCode, payload);
+      showRoom();
+      connectSocket();
+    } catch (error) {
+      removeSession(state.roomCode);
+      showEntry("join", `房主链接已失效：${error.message}`);
+    }
+  }
+
   function connectSocket() {
     if (!state.token || !state.roomCode) {
       return;
@@ -1348,6 +1364,13 @@
           "联机模式需要通过 npm start 启动服务器，不能直接双击本地文件进入房间。"
         );
         el.joinRoomButton.disabled = true;
+        return;
+      }
+      const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+      const fragmentToken = hash.get("owner");
+      if (fragmentToken) {
+        history.replaceState({}, "", location.pathname);
+        restoreFragmentSession(fragmentToken);
         return;
       }
       restoreSession();
