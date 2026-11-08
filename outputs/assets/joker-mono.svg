@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" role="img" aria-labelledby="title desc">
+  <title id="title">黑白 JOKER</title>
+  <desc id="desc">一张黑白墨水风格的弄臣牌面，戴三尖帽并托着扑克牌。</desc>
+  <defs>
+    <pattern id="hat-stripes" width="18" height="18" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+      <rect width="18" height="18" fill="#fffdf5"/>
+      <rect width="7" height="18" fill="#151515"/>
+    </pattern>
+    <pattern id="sleeve-stripes" width="13" height="13" patternUnits="userSpaceOnUse" patternTransform="rotate(-25)">
+      <rect width="13" height="13" fill="#171717"/>
+      <rect width="4" height="13" fill="#efede6"/>
+    </pattern>
+    <filter id="rough" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency=".6" numOctaves="2" seed="9" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.15"/>
+    </filter>
+  </defs>
+
+  <g fill="none" stroke="#171717" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)">
+    <path d="M38 44c44-17 178-17 224 0v325c-43 20-179 20-224 0z" stroke-width="2" opacity=".52"/>
+    <path d="M47 53c37-12 171-12 208 0v307c-37 15-171 15-208 0z" stroke-width="1" opacity=".26"/>
+    <path d="M151 238c-31-45-68-42-72-9-4 34 34 54 69 25-25-29-52-26-55-5-3 21 25 34 58 2" stroke-width="7"/>
+    <path d="M149 238c31-45 68-42 72-9 4 34-34 54-69 25 25-29 52-26 55-5 3 21-25 34-58 2" stroke-width="7"/>
+
+    <path d="M91 112c9-35 10-58 2-77-29 18-35 45-18 72" fill="url(#hat-stripes)" stroke-width="6"/>
+    <path d="M209 112c-9-35-10-58-2-77 29 18 35 45 18 72" fill="url(#hat-stripes)" stroke-width="6"/>
+    <path d="M116 115c4-44 11-74 34-91 23 17 30 47 34 91z" fill="url(#hat-stripes)" stroke-width="6"/>
+    <circle cx="91" cy="34" r="12" fill="#171717" stroke-width="5"/>
+    <circle cx="209" cy="34" r="12" fill="#171717" stroke-width="5"/>
+    <circle cx="150" cy="23" r="12" fill="#171717" stroke-width="5"/>
+
+    <path d="M96 119c5-28 22-44 54-44s49 16 54 44l-8 51c-8 32-25 48-46 48s-38-16-46-48z" fill="#fffdf5" stroke-width="7"/>
+    <path d="M108 112c10-12 27-18 42-18s32 6 42 18" stroke-width="3"/>
+    <path d="M114 139c10-7 21-7 31 0M155 139c10-7 21-7 31 0" stroke-width="5"/>
+    <circle cx="128" cy="146" r="3.5" fill="#171717" stroke="none"/>
+    <circle cx="172" cy="146" r="3.5" fill="#171717" stroke="none"/>
+    <path d="M150 148l-8 22h16z" fill="#171717" stroke-width="3"/>
+    <path d="M121 186c18 21 40 21 58 0-4 29-50 29-58 0z" fill="#171717" stroke-width="5"/>
+    <path d="M108 124c-9 1-14 9-13 22s7 20 17 18M192 124c9 1 14 9 13 22s-7 20-17 18" stroke-width="5"/>
+
+    <path d="M113 216c-29 15-47 45-52 89l35 17 18-52M187 216c29 15 47 45 52 89l-35 17-18-52" fill="url(#sleeve-stripes)" stroke-width="6"/>
+    <path d="M114 219c10 36 22 57 36 57s27-21 36-57" fill="#1a1a1a" stroke-width="6"/>
+    <path d="M124 223c4 16 12 31 26 40 14-9 22-24 26-40" fill="none" stroke="#f4f1e8" stroke-width="2" stroke-dasharray="4 6"/>
+
+    <path d="M75 292c6-34 31-54 75-54s69 20 75 54l-14 67c-24 22-99 22-122 0z" fill="#f9f6ec" stroke-width="6"/>
+    <path d="M94 284c16-11 35-16 56-16s40 5 56 16" stroke-width="2"/>
+    <path d="M146 273c-27 23-28 51-2 69 23-20 24-47 2-69zM155 274c31 17 37 42 18 65-24-12-30-33-18-65z" fill="none" stroke-width="4"/>
+    <path d="M63 293l62-20 58 15 59-15 2 36-57 12-63-13-59 14z" fill="#fffdf5" stroke-width="5"/>
+    <path d="M70 302l60-11 55 13 55-14" stroke-width="2"/>
+    <path d="M151 291l-10 18 10 18 10-18z" fill="#171717" stroke="none"/>
+    <circle cx="76" cy="330" r="12" fill="#171717" stroke-width="0"/>
+    <circle cx="224" cy="330" r="12" fill="#171717" stroke-width="0"/>
+
+    <path d="M105 344c13 15 26 24 44 31 18-7 31-16 44-31" stroke-width="4"/>
+    <path d="M150 371l-8 14 8 13 8-13z" fill="#171717" stroke="none"/>
+  </g>
+
+  <text x="150" y="403" text-anchor="middle" font-family="Georgia, serif" font-size="18" font-weight="700" letter-spacing="6" fill="#171717">JOKER</text>
+</svg>

@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sanpi-poker
+    runtime: node
+    rootDir: outputs
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: SESSION_SECRET
+        generateValue: true
