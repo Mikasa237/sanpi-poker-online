@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta
+      name="description"
+      content="三皮牌局：本地单机双副牌扑克游戏，与 3–6 名 AI 对战。"
+    />
+    <title>三皮牌局</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <main id="app" class="app-shell">
+      <section id="lobbyScreen" class="lobby-screen">
+        <div class="lobby-copy">
+          <p class="eyebrow">双副牌 · 三张定胜负</p>
+          <h1>三皮牌局</h1>
+          <p class="lobby-lead">
+            一张暗牌，一张明牌，再公开摸一张。点数和见高下，三皮一出定乾坤。
+          </p>
+          <div class="lobby-feature-row" aria-label="游戏特点">
+            <span>94 张牌</span>
+            <span>4–7 人</span>
+            <span>三档 AI</span>
+          </div>
+          <div class="rule-strip">
+            <div>
+              <strong>普通牌</strong>
+              <span>三张点数求和</span>
+            </div>
+            <div>
+              <strong>三皮</strong>
+              <span>目标点数越小越大</span>
+            </div>
+            <div>
+              <strong>赖子</strong>
+              <span>可补三皮，否则算 18</span>
+            </div>
+          </div>
+        </div>
+
+        <form id="startForm" class="setup-card" autocomplete="off">
+          <div class="setup-heading">
+            <div>
+              <p class="section-kicker">开桌设置</p>
+              <h2>入座</h2>
+            </div>
+            <span class="setup-badge">单机</span>
+          </div>
+
+          <fieldset class="field-group">
+            <legend>牌桌人数</legend>
+            <div id="playerCountGroup" class="segmented" role="radiogroup">
+              <button type="button" data-count="4" role="radio" aria-checked="false">4 人</button>
+              <button type="button" data-count="5" role="radio" aria-checked="false">5 人</button>
+              <button type="button" data-count="6" role="radio" aria-checked="true" class="is-selected">6 人</button>
+              <button type="button" data-count="7" role="radio" aria-checked="false">7 人</button>
+            </div>
+            <p class="field-note">包含你自己，其余座位由 AI 对战。</p>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend>AI 难度</legend>
+            <div id="difficultyGroup" class="difficulty-grid" role="radiogroup">
+              <button
+                type="button"
+                class="difficulty-option"
+                data-difficulty="casual"
+                role="radio"
+                aria-checked="false"
+              >
+                <span class="difficulty-title">休闲</span>
+                <span class="difficulty-copy">随性出牌，会犯小错</span>
+              </button>
+              <button
+                type="button"
+                class="difficulty-option is-selected"
+                data-difficulty="standard"
+                role="radio"
+                aria-checked="true"
+              >
+                <span class="difficulty-title">标准</span>
+                <span class="difficulty-copy">看牌力，也算底池赔率</span>
+              </button>
+              <button
+                type="button"
+                class="difficulty-option"
+                data-difficulty="expert"
+                role="radio"
+                aria-checked="false"
+              >
+                <span class="difficulty-title">高手</span>
+                <span class="difficulty-copy">更细的范围判断和施压</span>
+              </button>
+            </div>
+          </fieldset>
+
+          <div class="defaults-line">
+            <span>初始筹码 <strong>1,000</strong></span>
+            <span>底注 <strong>10</strong></span>
+            <span>最小下注 <strong>10</strong></span>
+          </div>
+
+          <button id="startGameButton" class="primary-button primary-button-large" type="submit">
+            入座开局
+          </button>
+
+          <a class="resume-button online-entry-link" href="online.html">
+            <span>联机对战</span>
+            <span>创建房间 · 链接邀请</span>
+          </a>
+
+          <button id="resumeGameButton" class="resume-button" type="button" hidden>
+            继续上次牌局
+            <span id="resumeMeta"></span>
+          </button>
+
+          <div class="lobby-footer">
+            <button id="lobbyRulesButton" class="text-button" type="button">完整规则</button>
+            <button id="resetSaveButton" class="text-button danger-text" type="button">
+              重置数据
+            </button>
+          </div>
+
+          <div id="lobbyStats" class="lobby-stats" aria-live="polite"></div>
+        </form>
+      </section>
+
+      <section id="gameScreen" class="game-screen" hidden>
+        <header class="topbar">
+          <div class="brand-compact">
+            <span class="brand-mark" aria-hidden="true">三</span>
+            <div>
+              <strong>三皮牌局</strong>
+              <span id="tableMeta">第 1 手 · 标准</span>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <button id="speedToggle" class="icon-button speed-button" type="button" title="行动速度">
+              <span id="speedIcon" class="speed-icon" aria-hidden="true">1×</span>
+              <span class="visually-hidden">行动速度</span>
+            </button>
+            <button id="soundToggle" class="icon-button" type="button" aria-pressed="true" title="声音开关">
+              <span class="button-icon" aria-hidden="true">♪</span>
+              <span class="visually-hidden">声音开关</span>
+            </button>
+            <button id="motionToggle" class="icon-button" type="button" aria-pressed="true" title="动画开关">
+              <span class="button-icon" aria-hidden="true">◌</span>
+              <span class="visually-hidden">动画开关</span>
+            </button>
+            <button id="gameRulesButton" class="ghost-button" type="button">规则</button>
+            <button id="leaveTableButton" class="ghost-button" type="button">离开牌桌</button>
+          </div>
+        </header>
+
+        <div class="game-layout">
+          <section id="tableShell" class="table-shell" aria-label="牌桌">
+            <div class="table-rail" aria-hidden="true"></div>
+            <div class="table-felt">
+              <div class="felt-line felt-line-one" aria-hidden="true"></div>
+              <div class="felt-line felt-line-two" aria-hidden="true"></div>
+            </div>
+            <div id="seatLayer" class="seat-layer"></div>
+            <section
+              id="humanHandZone"
+              class="human-hand-zone"
+              aria-label="你的手牌"
+            ></section>
+
+            <div class="table-center">
+              <div class="phase-pill">
+                <span id="phaseDot" class="phase-dot" aria-hidden="true"></span>
+                <span id="phaseText">等待发牌</span>
+              </div>
+              <div class="pot-block">
+                <span>底池</span>
+                <strong id="potAmount">0</strong>
+              </div>
+              <div class="table-piles">
+                <div class="pile-wrap">
+                  <div id="deckPile" class="card-back mini-deck" aria-hidden="true"></div>
+                  <span id="deckCount">0 张</span>
+                </div>
+                <div id="discardPile" class="discard-slot" aria-label="弃牌堆">
+                  <span>暗弃</span>
+                </div>
+              </div>
+              <p id="tableHint" class="table-hint" aria-live="polite">
+                准备开始
+              </p>
+              <div id="miniLog" class="mini-log" aria-live="polite"></div>
+            </div>
+          </section>
+
+          <aside class="action-dock" aria-label="操作区">
+            <section id="turnPanel" class="turn-panel">
+              <div class="turn-copy">
+                <span id="turnEyebrow" class="section-kicker">等待开局</span>
+                <h2 id="turnTitle">牌桌已就绪</h2>
+                <p id="turnDescription">开始后，你会看到自己的暗牌与所有明牌。</p>
+              </div>
+              <div id="readyArea" class="ready-area">
+                <button id="dealButton" class="primary-button" type="button">开始第一手</button>
+              </div>
+            </section>
+
+            <section id="bettingControls" class="betting-controls" hidden>
+              <div class="betting-meta">
+                <div>
+                  <span>需要跟注</span>
+                  <strong id="callNeed">0</strong>
+                </div>
+                <div>
+                  <span>底池赔率</span>
+                  <strong id="potOdds">—</strong>
+                </div>
+                <div>
+                  <span>本轮最高</span>
+                  <strong id="currentBet">0</strong>
+                </div>
+              </div>
+
+              <div id="raiseControl" class="raise-control">
+                <label for="raiseSlider">
+                  <span id="raiseLabel">下注到</span>
+                  <strong id="raiseValue">10</strong>
+                </label>
+                <div class="slider-row">
+                  <input id="raiseSlider" type="range" min="10" max="10" step="10" value="10" />
+                  <button id="raiseButton" class="primary-button" type="button">下注</button>
+                </div>
+                <div id="quickRaises" class="quick-raises">
+                  <button type="button" data-raise="min">最小</button>
+                  <button type="button" data-raise="half">半池</button>
+                  <button type="button" data-raise="pot">一池</button>
+                  <button type="button" data-raise="max">最大</button>
+                </div>
+              </div>
+
+              <div class="secondary-actions">
+                <button id="foldButton" class="secondary-button" type="button">弃牌</button>
+                <button id="callButton" class="secondary-button" type="button">跟注</button>
+                <button id="allInButton" class="all-in-button" type="button">全下</button>
+              </div>
+            </section>
+
+            <section id="waitingControls" class="waiting-controls" hidden>
+              <div class="thinking-orbit" aria-hidden="true"><span></span></div>
+              <div>
+                <strong id="waitingTitle">等待 AI 行动</strong>
+                <p id="waitingDescription">AI 正在评估牌力。</p>
+              </div>
+            </section>
+
+            <section id="resultPanel" class="result-panel" hidden aria-live="polite">
+              <div class="result-heading">
+                <div>
+                  <p id="resultEyebrow" class="section-kicker">本手结算</p>
+                  <h2 id="resultTitle">牌局结束</h2>
+                </div>
+                <strong id="resultPot">0</strong>
+              </div>
+              <div id="resultAwards" class="result-awards"></div>
+              <details id="resultDetails" class="result-details">
+                <summary>查看开牌与底池明细</summary>
+                <div id="resultDetailBody"></div>
+              </details>
+              <button id="nextHandButton" class="primary-button primary-button-large" type="button">
+                开始下一手
+              </button>
+            </section>
+
+            <div class="hand-footnote">
+              <span>底注 10</span>
+              <span>两副牌共 94 张</span>
+              <span id="difficultyFootnote">标准 AI</span>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="rulesDialog" class="rules-dialog">
+      <div class="dialog-shell">
+        <header class="dialog-header">
+          <div>
+            <p class="section-kicker">玩法速查</p>
+            <h2>三皮规则</h2>
+          </div>
+          <button id="closeRulesButton" class="icon-button" type="button" aria-label="关闭规则">×</button>
+        </header>
+        <div class="rules-content">
+          <section>
+            <h3>牌组与点数</h3>
+            <p>
+              两副牌共 94 张。5–10 按面值，J=11、Q=12、K=13、A=14、2=15；
+              黑白 JOKER（小王）=16、彩色 JOKER（大王）=17、赖子=18。
+              花色大小为黑桃 &gt; 红桃 &gt; 梅花 &gt; 方块。
+            </p>
+          </section>
+          <section>
+            <h3>每手流程</h3>
+            <ol>
+              <li>所有人先下 10 底注，再依次收到一张暗牌和一张明牌。</li>
+              <li>明牌最大者先下注，随后按顺序跟注、加注、全下或弃牌。</li>
+              <li>第一轮结束暗弃一张，从先手位置起依次公开摸一张。</li>
+              <li>完成第二轮下注后开牌；只剩一人时直接收下底池。</li>
+            </ol>
+          </section>
+          <section>
+            <h3>普通牌</h3>
+            <p>
+              三张牌点数求和，大者获胜。同和时按点数降序比较，再比较花色。
+              赖子未组成三皮时按 18 点计算。
+            </p>
+          </section>
+          <section>
+            <h3>三皮</h3>
+            <p>
+              三张自然相同 &gt; 两张相同 + 赖子 &gt; 一张 + 两张赖子。
+              同一等级中，三皮目标点数越小越大；目标相同再比较组成牌型的自然牌花色。
+            </p>
+          </section>
+          <section>
+            <h3>加注与全下</h3>
+            <p>
+              每轮开局必须由先手玩家下注，最小下注与最小加注均为 10。
+              有人加注后，其他存活玩家需跟到当前额度或弃牌。全下会按投入层级分别结算边池，
+              未被跟注的超额筹码会退回。
+            </p>
+          </section>
+          <section>
+            <h3>淘汰与胜负</h3>
+            <p>
+              筹码归零的玩家会立即淘汰并退出牌桌，不会重新买入。
+              你的筹码归零时本局立即失败；其他玩家全部淘汰时，你赢下整桌并可重新开局。
+            </p>
+          </section>
+        </div>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script src="engine.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

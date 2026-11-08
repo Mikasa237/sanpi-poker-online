@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta
+      name="description"
+      content="三皮牌局联机房间：创建链接，邀请最多十名好友实时对战。"
+    />
+    <title>三皮牌局 · 联机</title>
+    <link rel="stylesheet" href="/styles.css?v=3" />
+    <link rel="stylesheet" href="/online.css?v=3" />
+  </head>
+  <body class="online-body">
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <main id="onlineApp" class="online-app">
+      <section id="loadingScreen" class="online-loading">
+        <span class="loading-mark">三</span>
+        <p>正在连接牌桌…</p>
+      </section>
+
+      <section id="entryScreen" class="entry-screen" hidden>
+        <a class="back-link" href="/index.html">← 返回单机牌桌</a>
+        <div class="entry-layout">
+          <div class="entry-copy">
+            <p class="eyebrow">一桌好友 · 实时开局</p>
+            <h1>线上<br />三皮局</h1>
+            <p>
+              创建一个固定房间链接，最多十名真人朋友直接进入。每人只看到自己的底牌，
+              发牌、下注和结算全部由服务器判定。
+            </p>
+            <div class="online-feature-list">
+              <span>2–10 人</span>
+              <span>链接直达</span>
+              <span>随时改名</span>
+              <span>无自动补筹码</span>
+            </div>
+          </div>
+
+          <div class="entry-card">
+            <div id="createRoomPanel">
+              <p class="section-kicker">创建联机房</p>
+              <h2>开一张新桌</h2>
+              <form id="createRoomForm">
+                <label class="online-field">
+                  <span>你的昵称</span>
+                  <input
+                    id="createName"
+                    name="name"
+                    maxlength="12"
+                    autocomplete="nickname"
+                    placeholder="最多 12 个字符"
+                    required
+                  />
+                </label>
+                <label class="online-field">
+                  <span>最多座位</span>
+                  <select id="createSeatCap" name="seatCap">
+                    <option value="2">2 人</option>
+                    <option value="3">3 人</option>
+                    <option value="4">4 人</option>
+                    <option value="5">5 人</option>
+                    <option value="6" selected>6 人</option>
+                    <option value="7">7 人</option>
+                    <option value="8">8 人</option>
+                    <option value="9">9 人</option>
+                    <option value="10">10 人</option>
+                  </select>
+                </label>
+                <button id="createRoomButton" class="primary-button primary-button-large" type="submit">
+                  创建并获取邀请链接
+                </button>
+              </form>
+            </div>
+
+            <div id="joinRoomPanel" hidden>
+              <p class="section-kicker">加入联机房</p>
+              <h2>房间 <span id="joinCode"></span></h2>
+              <form id="joinRoomForm">
+                <label class="online-field">
+                  <span>你的昵称</span>
+                  <input
+                    id="joinName"
+                    name="name"
+                    maxlength="12"
+                    autocomplete="nickname"
+                    placeholder="最多 12 个字符"
+                    required
+                  />
+                </label>
+                <button id="joinRoomButton" class="primary-button primary-button-large" type="submit">
+                  进入房间
+                </button>
+              </form>
+            </div>
+
+            <p id="entryError" class="entry-error" role="alert" hidden></p>
+            <p class="entry-note">
+              房间没有密码。任何拿到链接的人都能申请加入，同一个房间内昵称不能重复。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="roomScreen" class="online-room" hidden>
+        <header class="online-topbar">
+          <div class="online-brand">
+            <a class="brand-mark" href="/index.html" aria-label="返回首页">三</a>
+            <div>
+              <strong>三皮牌局</strong>
+              <span>联机房间 <b id="headerRoomCode">------</b></span>
+            </div>
+          </div>
+          <div class="online-top-actions">
+            <span id="connectionBadge" class="connection-badge" data-state="connected">
+              <i aria-hidden="true"></i>已连接
+            </span>
+            <button id="copyLinkButton" class="ghost-button" type="button">复制链接</button>
+            <button id="renameButton" class="ghost-button" type="button">修改昵称</button>
+            <button id="rulesButton" class="ghost-button" type="button">规则</button>
+            <button id="leaveRoomButton" class="ghost-button danger-ghost" type="button">
+              离开
+            </button>
+          </div>
+        </header>
+
+        <section id="lobbyArea" class="online-lobby" hidden>
+          <div class="lobby-room-heading">
+            <div>
+              <p class="section-kicker">等待开局</p>
+              <h1>好友正在入座</h1>
+              <p id="lobbyLead">把链接发给朋友，房主可以随时开始。</p>
+            </div>
+            <div class="invite-card">
+              <span>固定邀请链接</span>
+              <strong id="shareUrlText"></strong>
+              <button id="copyLinkLargeButton" class="primary-button" type="button">
+                复制邀请链接
+              </button>
+            </div>
+          </div>
+
+          <div class="lobby-grid">
+            <div>
+              <div class="panel-title-row">
+                <div>
+                  <p class="section-kicker">在座玩家</p>
+                  <h2><span id="seatedPlayerCount">0</span> / <span id="seatCapText">0</span></h2>
+                </div>
+                <span id="lobbyRoomStatus" class="online-status-pill">等待房主</span>
+              </div>
+              <div id="lobbySeats" class="lobby-seats"></div>
+            </div>
+            <aside class="lobby-roster">
+              <div class="panel-title-row">
+                <div>
+                  <p class="section-kicker">旁观席</p>
+                  <h2 id="spectatorCount">0 人</h2>
+                </div>
+              </div>
+              <div id="spectatorList" class="spectator-list"></div>
+              <hr />
+              <div class="host-controls">
+                <p class="section-kicker">房主控制</p>
+                <p id="hostHint">至少需要两名在座玩家才能开局。</p>
+                <button id="lobbyStartButton" class="primary-button primary-button-large" type="button">
+                  开始第一手
+                </button>
+                <label class="online-field compact-field">
+                  <span>房主管理目标</span>
+                  <select id="lobbyHostTargetSelect"></select>
+                </label>
+                <div class="host-target-actions">
+                  <button id="lobbyRemoveButton" class="secondary-button" type="button">
+                    移出座位
+                  </button>
+                  <button id="transferHostButton" class="secondary-button" type="button">
+                    转让房主
+                  </button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="onlineGameArea" class="online-game-layout" hidden>
+          <section id="onlineTableShell" class="table-shell online-table-shell" aria-label="联机牌桌">
+            <div class="table-rail" aria-hidden="true"></div>
+            <div class="table-felt">
+              <div class="felt-line felt-line-one" aria-hidden="true"></div>
+              <div class="felt-line felt-line-two" aria-hidden="true"></div>
+            </div>
+            <div id="onlineSeatLayer" class="seat-layer"></div>
+            <section id="onlineHumanHandZone" class="human-hand-zone" aria-label="你的手牌"></section>
+            <div id="spectatorNotice" class="spectator-notice" hidden>
+              <strong>旁观中</strong>
+              <span>你会在下一手有空位时入座</span>
+            </div>
+
+            <div class="table-center">
+              <div class="phase-pill">
+                <span id="onlinePhaseDot" class="phase-dot" aria-hidden="true"></span>
+                <span id="onlinePhaseText">等待开局</span>
+              </div>
+              <div class="pot-block">
+                <span>底池</span>
+                <strong id="onlinePotAmount">0</strong>
+              </div>
+              <div class="table-piles">
+                <div class="pile-wrap">
+                  <div class="card-back mini-deck" aria-hidden="true"></div>
+                  <span id="onlineDeckCount">0 张</span>
+                </div>
+                <div id="onlineDiscardPile" class="discard-slot"><span>暗弃</span></div>
+              </div>
+              <p id="onlineTableHint" class="table-hint">等待房主开始</p>
+              <div id="onlineMiniLog" class="mini-log"></div>
+            </div>
+          </section>
+
+          <aside class="action-dock online-action-dock">
+            <section id="onlineTurnPanel" class="turn-panel">
+              <div class="turn-copy">
+                <span id="onlineTurnEyebrow" class="section-kicker">联机牌桌</span>
+                <h2 id="onlineTurnTitle">等待开始</h2>
+                <p id="onlineTurnDescription">房主开局后开始发牌。</p>
+              </div>
+            </section>
+
+            <section id="onlineBettingControls" class="betting-controls" hidden>
+              <div class="betting-meta">
+                <div>
+                  <span>需要跟注</span>
+                  <strong id="onlineCallNeed">0</strong>
+                </div>
+                <div>
+                  <span>底池赔率</span>
+                  <strong id="onlinePotOdds">—</strong>
+                </div>
+                <div>
+                  <span>本轮最高</span>
+                  <strong id="onlineCurrentBet">0</strong>
+                </div>
+              </div>
+              <div id="onlineRaiseControl" class="raise-control">
+                <label for="onlineRaiseSlider">
+                  <span id="onlineRaiseLabel">下注到</span>
+                  <strong id="onlineRaiseValue">10</strong>
+                </label>
+                <div class="slider-row">
+                  <input id="onlineRaiseSlider" type="range" min="10" max="10" step="10" value="10" />
+                  <button id="onlineRaiseButton" class="primary-button" type="button">下注</button>
+                </div>
+                <div id="onlineQuickRaises" class="quick-raises">
+                  <button type="button" data-raise="min">最小</button>
+                  <button type="button" data-raise="half">半池</button>
+                  <button type="button" data-raise="pot">一池</button>
+                  <button type="button" data-raise="max">最大</button>
+                </div>
+              </div>
+              <div class="secondary-actions">
+                <button id="onlineFoldButton" class="secondary-button" type="button">弃牌</button>
+                <button id="onlineCallButton" class="secondary-button" type="button">跟注</button>
+                <button id="onlineAllInButton" class="all-in-button" type="button">全下</button>
+              </div>
+            </section>
+
+            <section id="onlineWaitingControls" class="waiting-controls" hidden>
+              <div class="thinking-orbit" aria-hidden="true"><span></span></div>
+              <div>
+                <strong id="onlineWaitingTitle">等待其他玩家</strong>
+                <p id="onlineWaitingDescription">牌桌状态会自动同步。</p>
+              </div>
+              <button id="hostSkipButton" class="danger-ghost compact-action" type="button" hidden>
+                跳过当前玩家
+              </button>
+            </section>
+
+            <section id="onlineResultPanel" class="result-panel" hidden aria-live="polite">
+              <div class="result-heading">
+                <div>
+                  <p id="onlineResultEyebrow" class="section-kicker">本手结算</p>
+                  <h2 id="onlineResultTitle">牌局结束</h2>
+                </div>
+                <strong id="onlineResultPot">0</strong>
+              </div>
+              <div id="onlineResultAwards" class="result-awards"></div>
+              <p id="onlineNextHint" class="online-next-hint"></p>
+              <details id="onlineResultDetails" class="result-details">
+                <summary>查看开牌与底池明细</summary>
+                <div id="onlineResultDetailBody"></div>
+              </details>
+            </section>
+
+            <section id="hostControls" class="host-controls online-host-controls">
+              <p class="section-kicker">房主控制</p>
+              <div class="host-control-row">
+                <button id="hostPauseButton" class="secondary-button" type="button">暂停续手</button>
+                <button id="hostResumeButton" class="secondary-button" type="button" hidden>继续续手</button>
+                <button id="hostStartNowButton" class="primary-button" type="button" hidden>立即开始下一手</button>
+                <button id="hostRestartButton" class="primary-button" type="button" hidden>开始新一局</button>
+              </div>
+              <label class="online-field compact-field">
+                <span>移座或转让房主</span>
+                <select id="hostTargetSelect"></select>
+              </label>
+              <div class="host-target-actions">
+                <button id="hostRemoveButton" class="secondary-button" type="button">本手结束后移座</button>
+                <button id="hostTransferButton" class="secondary-button" type="button">转让房主</button>
+              </div>
+            </section>
+
+            <div class="hand-footnote">
+              <span>底注 10</span>
+              <span>房主可以手动处理掉线玩家</span>
+              <span id="onlineRemainingText">剩余 0 人</span>
+            </div>
+          </aside>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="renameDialog" class="rules-dialog small-dialog">
+      <form id="renameForm" class="dialog-shell" method="dialog">
+        <header class="dialog-header">
+          <div>
+            <p class="section-kicker">随时修改</p>
+            <h2>改个昵称</h2>
+          </div>
+          <button id="closeRenameButton" class="icon-button" type="button" aria-label="关闭">×</button>
+        </header>
+        <label class="online-field">
+          <span>新昵称</span>
+          <input id="renameInput" maxlength="12" required autocomplete="nickname" />
+        </label>
+        <p id="renameError" class="entry-error" role="alert" hidden></p>
+        <button class="primary-button primary-button-large" value="default" type="submit">
+          保存昵称
+        </button>
+      </form>
+    </dialog>
+
+    <dialog id="rulesDialog" class="rules-dialog">
+      <div class="dialog-shell">
+        <header class="dialog-header">
+          <div>
+            <p class="section-kicker">联机规则</p>
+            <h2>三皮玩法</h2>
+          </div>
+          <button id="closeRulesButton" class="icon-button" type="button" aria-label="关闭">×</button>
+        </header>
+        <div class="rules-content">
+          <section><h3>牌组与点数</h3><p>两副牌共 94 张。5–10 按面值，J=11、Q=12、K=13、A=14、2=15；黑白 JOKER=16、彩色 JOKER=17、赖子=18。</p></section>
+          <section><h3>每手流程</h3><p>每人先下 10 底注，获得一张暗牌和一张明牌。明牌最大者先下注，第一轮结束后公开摸第三张，再完成一轮下注并开牌。</p></section>
+          <section><h3>普通牌与三皮</h3><p>普通牌比较三张点数和。三皮等级为三张自然相同 &gt; 两张相同加赖子 &gt; 一张加两张赖子；同一等级中目标点数越小越大。</p></section>
+          <section><h3>联机淘汰</h3><p>筹码归零后自动离开座位并成为旁观者。不会补筹码。最后一名有筹码的玩家赢下整桌。</p></section>
+          <section><h3>掉线与房主</h3><p>掉线不自动弃牌。房主确认后可以跳过卡住的当前玩家；本手结束后将其移座。房主离开后会自动转让。</p></section>
+        </div>
+      </div>
+    </dialog>
+
+    <div id="onlineToast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script src="/engine.js?v=3"></script>
+    <script src="/online.js?v=3"></script>
+  </body>
+</html>

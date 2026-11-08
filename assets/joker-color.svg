@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" role="img" aria-labelledby="title desc">
+  <title id="title">彩色 JOKER</title>
+  <desc id="desc">一张华丽的彩色弄臣牌面，红绿金配色，戴着三尖帽并展示扑克花色。</desc>
+  <defs>
+    <radialGradient id="halo" cx="50%" cy="37%" r="55%">
+      <stop offset="0" stop-color="#fff3bb" stop-opacity=".95"/>
+      <stop offset=".58" stop-color="#e9b849" stop-opacity=".32"/>
+      <stop offset="1" stop-color="#e9b849" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="red" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f05a52"/>
+      <stop offset="1" stop-color="#8b1f2d"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3faa86"/>
+      <stop offset="1" stop-color="#0b5b54"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff0ad"/>
+      <stop offset=".5" stop-color="#dba43a"/>
+      <stop offset="1" stop-color="#8f5c16"/>
+    </linearGradient>
+    <pattern id="diamond-stripes" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="20" height="20" fill="#f9e8b1"/>
+      <path d="M0 0h10v10H0zM10 10h10v10H10z" fill="#b62d3c"/>
+    </pattern>
+  </defs>
+
+  <circle cx="150" cy="184" r="150" fill="url(#halo)"/>
+  <g stroke="#22140e" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M43 48c38-14 176-14 214 0" fill="none" stroke="#d7a84b" stroke-width="2"/>
+    <path d="M57 365c35 12 151 12 186 0" fill="none" stroke="#d7a84b" stroke-width="2"/>
+
+    <path d="M84 118c9-37 15-64 7-87-32 13-41 47-20 78" fill="url(#red)" stroke-width="6"/>
+    <path d="M216 118c-9-37-15-64-7-87 32 13 41 47 20 78" fill="url(#green)" stroke-width="6"/>
+    <path d="M112 119c4-46 12-78 38-99 26 21 34 53 38 99z" fill="url(#diamond-stripes)" stroke-width="6"/>
+    <circle cx="90" cy="29" r="13" fill="url(#gold)" stroke-width="5"/>
+    <circle cx="210" cy="29" r="13" fill="url(#gold)" stroke-width="5"/>
+    <circle cx="150" cy="17" r="14" fill="url(#gold)" stroke-width="5"/>
+
+    <path d="M94 119c7-29 24-45 56-45s49 16 56 45l-8 52c-6 34-24 51-48 51s-42-17-48-51z" fill="#f5dcbc" stroke-width="7"/>
+    <path d="M105 115c13-12 28-17 45-17s32 5 45 17" fill="none" stroke="#7d3f21" stroke-width="4"/>
+    <path d="M113 142c9-8 21-8 30 0M157 142c9-8 21-8 30 0" fill="none" stroke="#2d1810" stroke-width="5"/>
+    <circle cx="128" cy="149" r="4" fill="#0c6a5f" stroke="none"/>
+    <circle cx="172" cy="149" r="4" fill="#0c6a5f" stroke="none"/>
+    <path d="M150 150l-8 21h16z" fill="#b62d3c" stroke-width="3"/>
+    <path d="M118 187c20 25 44 25 64 0-3 31-58 31-64 0z" fill="#8f1e2b" stroke-width="5"/>
+    <path d="M130 194c12 8 28 8 40 0" fill="none" stroke="#f7e3c4" stroke-width="3"/>
+    <path d="M104 126c-11 3-15 13-13 26s9 19 19 16M196 126c11 3 15 13 13 26s-9 19-19 16" fill="none" stroke="#7d3f21" stroke-width="4"/>
+
+    <path d="M112 216c-31 16-51 45-58 91l36 18 22-58M188 216c31 16 51 45 58 91l-36 18-22-58" fill="url(#green)" stroke-width="6"/>
+    <path d="M111 217c9 39 21 64 39 64s30-25 39-64" fill="url(#red)" stroke-width="6"/>
+    <path d="M116 226c10 16 19 28 34 36 15-8 24-20 34-36" fill="none" stroke="#e0b353" stroke-width="3" stroke-dasharray="5 5"/>
+
+    <path d="M71 295c6-37 33-59 79-59s73 22 79 59l-13 65c-31 24-101 24-132 0z" fill="#f8e7c8" stroke-width="7"/>
+    <path d="M94 291c15-13 35-19 56-19s41 6 56 19" fill="none" stroke="#a16c26" stroke-width="2"/>
+
+    <path d="M128 271c-30 15-33 49-7 70 24-10 28-36 7-70z" fill="#f8f4e6" stroke-width="4"/>
+    <path d="M153 271c31 15 35 49 10 70-25-10-29-36-10-70z" fill="#f8f4e6" stroke-width="4"/>
+    <path d="M134 277c9 4 20 4 29 0" fill="none" stroke="#b62d3c" stroke-width="3"/>
+    <path d="M150 284l-8 17 8 15 8-15z" fill="#b62d3c" stroke="none"/>
+    <path d="M149 316l-8 14 8 17 8-17z" fill="#171717" stroke="none"/>
+    <path d="M98 315c20-21 39-21 51-3-16 18-37 19-51 3zM152 312c12-18 31-18 51 3-14 16-35 15-51-3z" fill="#d84d4c" stroke-width="4"/>
+
+    <path d="M65 300l63-22 60 16 60-16 2 37-58 13-65-14-60 15z" fill="#f9e9c4" stroke-width="5"/>
+    <path d="M72 308l60-12 57 14 57-15" fill="none" stroke="#c1903e" stroke-width="2"/>
+    <path d="M77 334l-8-20 12-15 12 15-7 20zM223 334l-9-20 12-15 12 15-6 20z" fill="url(#gold)" stroke-width="4"/>
+    <path d="M102 349c15 13 30 21 48 27 18-6 33-14 48-27" fill="none" stroke="#7d1f29" stroke-width="5"/>
+    <path d="M150 371l-9 15 9 14 9-14z" fill="#c7922c" stroke="none"/>
+  </g>
+
+  <text x="150" y="404" text-anchor="middle" font-family="Georgia, serif" font-size="19" font-weight="700" letter-spacing="6" fill="#0b5b54">JOKER</text>
+</svg>
