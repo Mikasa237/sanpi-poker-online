@@ -48,6 +48,9 @@
   let audioContext = null;
   let lastRenderedPhase = "";
   let savedPayloadExists = false;
+  let localPresentation = null;
+  let localPresentationTimers = [];
+  let localEquityCache = null;
 
   const el = {};
   const ids = [
@@ -102,6 +105,9 @@
     "waitingControls",
     "waitingTitle",
     "waitingDescription",
+    "localEquityPanel",
+    "localEquityHand",
+    "localEquityBars",
     "resultPanel",
     "resultEyebrow",
     "resultTitle",
@@ -295,7 +301,7 @@
     lastRenderedPhase = "";
     persist();
     showGame();
-    playSound("deal");
+    startLocalInitialPresentation(() => renderAll());
     showToast(`第 1 手开始，底注 ${game.config.ante}`);
   }
 
@@ -305,6 +311,201 @@
     }
     showGame();
     showToast("已恢复上次牌局");
+  }
+
+  function clearLocalPresentation() {
+    localPresentationTimers.forEach((timer) => window.clearTimeout(timer));
+    localPresentationTimers = [];
+    localPresentation = null;
+  }
+
+  function localMotionEnabled() {
+    return (
+      prefs.motion &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  }
+
+  function presentationHas(index, slot) {
+    if (!localPresentation) {
+      return true;
+    }
+    return localPresentation[slot].includes(index);
+  }
+
+  function cardForPresentation(index, slot, card) {
+    if (!localPresentation) {
+      return card;
+    }
+    return presentationHas(index, slot) ? card : null;
+  }
+
+  function localPresentationDelay(callback, duration) {
+    const timer = window.setTimeout(callback, duration);
+    localPresentationTimers.push(timer);
+  }
+
+  function startLocalInitialPresentation(onComplete) {
+    clearAiTimer();
+    clearLocalPresentation();
+    if (!localMotionEnabled() || !game?.dealOrder?.length) {
+      renderAll();
+      onComplete();
+      return;
+    }
+    const order = game.dealOrder.slice();
+    localPresentation = {
+      kind: "initial",
+      stage: "hole",
+      order,
+      index: -1,
+      hole: [],
+      up: [],
+      draw: [],
+      last: null
+    };
+    renderAll();
+    const revealHole = () => {
+      localPresentation.index += 1;
+      if (localPresentation.index < order.length) {
+        const index = order[localPresentation.index];
+        localPresentation.hole.push(index);
+        localPresentation.last = { seat: index, slot: "hole" };
+        renderAll();
+        animateLocalPresentationCard(index, "hole");
+        localPresentationDelay(revealHole, 220);
+        return;
+      }
+      localPresentation.stage = "up";
+      localPresentation.index = -1;
+      localPresentationDelay(revealUp, 350);
+    };
+    const revealUp = () => {
+      localPresentation.index += 1;
+      if (localPresentation.index < order.length) {
+        const index = order[localPresentation.index];
+        localPresentation.up.push(index);
+        localPresentation.last = { seat: index, slot: "up" };
+        renderAll();
+        animateLocalPresentationCard(index, "up");
+        localPresentationDelay(revealUp, 220);
+        return;
+      }
+      localPresentation.stage = "opening";
+      renderAll();
+      localPresentationDelay(() => {
+        clearLocalPresentation();
+        renderAll();
+        onComplete?.();
+      }, 450);
+    };
+    localPresentationDelay(revealHole, 350);
+  }
+
+  function startLocalDrawPresentation(onComplete) {
+    clearAiTimer();
+    clearLocalPresentation();
+    if (!localMotionEnabled()) {
+      renderAll();
+      onComplete();
+      return;
+    }
+    const alive = game.players
+      .filter((player) => !player.eliminated && !player.folded)
+      .map((player) => player.seat);
+    const opener = alive.includes(game.openerIndex)
+      ? game.openerIndex
+      : alive[0];
+    const offset = alive.indexOf(opener);
+    const order =
+      offset >= 0 ? alive.slice(offset).concat(alive.slice(0, offset)) : alive;
+    localPresentation = {
+      kind: "draw",
+      stage: "discard",
+      order,
+      index: -1,
+      hole: game.players.map((player) => player.seat),
+      up: game.players.map((player) => player.seat),
+      draw: [],
+      last: null
+    };
+    renderAll();
+    localPresentationDelay(() => {
+      localPresentation.stage = "draw";
+      renderAll();
+      revealDraw();
+    }, 450);
+    const revealDraw = () => {
+      localPresentation.index += 1;
+      if (localPresentation.index < order.length) {
+        const index = order[localPresentation.index];
+        localPresentation.draw.push(index);
+        localPresentation.last = { seat: index, slot: "draw" };
+        renderAll();
+        animateLocalPresentationCard(index, "draw");
+        localPresentationDelay(revealDraw, 250);
+        return;
+      }
+      localPresentationDelay(() => {
+        clearLocalPresentation();
+        renderAll();
+        onComplete?.();
+      }, 500);
+    };
+  }
+
+  function animateLocalPresentationCard(seat, slot) {
+    if (!localMotionEnabled()) {
+      return;
+    }
+    const target =
+      document.querySelector(
+        `.seat[data-seat-index="${seat}"] .role-${slot} .playing-card`
+      ) ||
+      (seat === 0
+        ? document.querySelector(
+            `.human-hand-card .role-${slot} .playing-card`
+          )
+        : null);
+    const deck = el.deckPile;
+    if (!target || !deck) {
+      return;
+    }
+    const targetRect = target.getBoundingClientRect();
+    const deckRect = deck.getBoundingClientRect();
+    const clone = document.createElement("div");
+    clone.className = "playing-card card-back dealing-flight-card";
+    clone.style.left = `${deckRect.left}px`;
+    clone.style.top = `${deckRect.top}px`;
+    clone.style.width = `${targetRect.width}px`;
+    clone.style.height = `${targetRect.height}px`;
+    document.body.appendChild(clone);
+    target.style.visibility = "hidden";
+    const deltaX = targetRect.left - deckRect.left;
+    const deltaY = targetRect.top - deckRect.top;
+    const animation = clone.animate(
+      [
+        { transform: "translate(0,0) rotate(-8deg) scale(.8)", opacity: 0.35 },
+        {
+          transform: `translate(${deltaX * 0.52}px, ${deltaY * 0.52 - 38}px) rotate(5deg) scale(1.03)`,
+          opacity: 1,
+          offset: 0.55
+        },
+        {
+          transform: `translate(${deltaX}px, ${deltaY}px) rotate(0) scale(1)`,
+          opacity: 1
+        }
+      ],
+      { duration: 360, easing: "cubic-bezier(.22,.72,.25,1)" }
+    );
+    playSound("chip");
+    animation.finished
+      .catch(() => {})
+      .finally(() => {
+        clone.remove();
+        target.style.visibility = "";
+        target.classList.add("card-flip-in");
+      });
   }
 
   function opponentPosition(ordinal, count) {
@@ -434,9 +635,16 @@
       .filter(Boolean)
       .join(" ");
     const cards = [
-      miniCardSlot(player.holeCard, "hole", { hidden: !player.revealed }),
-      miniCardSlot(player.upCard, "up"),
-      miniCardSlot(player.drawCard, "draw", { label: "待摸牌" })
+      miniCardSlot(cardForPresentation(index, "hole", player.holeCard), "hole", {
+        hidden:
+          presentationHas(index, "hole") &&
+          Boolean(player.holeCard) &&
+          !player.revealed
+      }),
+      miniCardSlot(cardForPresentation(index, "up", player.upCard), "up"),
+      miniCardSlot(cardForPresentation(index, "draw", player.drawCard), "draw", {
+        label: "待摸牌"
+      })
     ].join("");
     const dealerBadge =
       game.dealerIndex === index
@@ -451,6 +659,7 @@
     return `
       <article
         class="${classes}"
+        data-seat-index="${index}"
         style="--seat-x:${position.x.toFixed(3)}%;--seat-y:${position.y.toFixed(3)}%"
         aria-label="${escapeHtml(player.name)}，${formatNumber(player.stack)} 筹码，${escapeHtml(status)}"
       >
@@ -521,7 +730,7 @@
           player.folded ? "is-folded" : ""
         } ${player.eliminated ? "is-eliminated" : ""} ${
           isWinner ? "is-winner" : ""
-        }"
+        }" data-seat-index="0"
         aria-label="你的手牌，${formatNumber(player.stack)} 筹码，${escapeHtml(status)}"
       >
         <div class="human-hand-identity">
@@ -543,14 +752,19 @@
         </div>
         <div class="hero-hand-cards">
           ${heroCardSlot(
-            player.holeCard,
+            cardForPresentation(0, "hole", player.holeCard),
             "hole",
             "底牌",
             player.folded ? "已盖牌" : "仅你可见"
           )}
-          ${heroCardSlot(player.upCard, "up", "明牌", "桌面公开")}
           ${heroCardSlot(
-            player.drawCard,
+            cardForPresentation(0, "up", player.upCard),
+            "up",
+            "明牌",
+            "桌面公开"
+          )}
+          ${heroCardSlot(
+            cardForPresentation(0, "draw", player.drawCard),
             "draw",
             "摸牌",
             player.drawCard ? "桌面公开" : "第一轮后"
@@ -582,6 +796,17 @@
   }
 
   function phaseText() {
+    if (localPresentation) {
+      return localPresentation.kind === "initial"
+        ? localPresentation.stage === "hole"
+          ? "正在发暗牌"
+          : localPresentation.stage === "up"
+            ? "正在发明牌"
+            : "正在确定先手"
+        : localPresentation.stage === "discard"
+          ? "正在暗弃"
+          : "正在摸牌";
+    }
     if (game.tableOver) {
       return "本局结束";
     }
@@ -591,7 +816,12 @@
     if (game.phase === "bet2") {
       return "第二轮下注";
     }
-    if (game.phase === "complete") {
+    if (localPresentation) {
+      el.tableHint.textContent =
+        localPresentation.kind === "initial"
+          ? "牌正从牌堆发往每位玩家。"
+          : "第三张牌正在依次公开。";
+    } else if (game.phase === "complete") {
       return "本手结束";
     }
     if (game.phase === "dealing") {
@@ -625,7 +855,12 @@
     }
 
     const latest = game.logs
-      .filter((entry) => entry.hand === game.handNo)
+      .filter(
+        (entry) =>
+          entry.hand === game.handNo &&
+          (!localPresentation ||
+            (entry.type === "phase" && localPresentation.stage !== "opening"))
+      )
       .slice(-2)
       .map((entry) => entry.text);
     el.miniLog.textContent = latest.join(" ");
@@ -633,6 +868,7 @@
 
   function humanTurn() {
     return (
+      !localPresentation &&
       ["bet1", "bet2"].includes(game.phase) &&
       game.actorIndex === 0 &&
       !game.players[0].eliminated &&
@@ -651,7 +887,7 @@
     const isHumanTurn = humanTurn();
     el.bettingControls.hidden = !isHumanTurn;
     el.waitingControls.hidden = true;
-    el.resultPanel.hidden = game.phase !== "complete";
+    el.resultPanel.hidden = Boolean(localPresentation) || game.phase !== "complete";
     el.readyArea.hidden = game.phase !== "ready";
 
     if (game.phase === "ready") {
@@ -659,6 +895,27 @@
       el.turnTitle.textContent = "牌桌已就绪";
       el.turnDescription.textContent =
         "开始后，你会看到自己的暗牌与所有明牌。";
+      return;
+    }
+
+    if (localPresentation) {
+      el.localEquityPanel.hidden = true;
+      el.waitingControls.hidden = false;
+      el.turnEyebrow.textContent =
+        localPresentation.kind === "initial" ? "发牌阶段" : "摸牌阶段";
+      el.turnTitle.textContent =
+        localPresentation.kind === "initial"
+          ? localPresentation.stage === "hole"
+            ? "正在发暗牌"
+            : localPresentation.stage === "up"
+              ? "正在发明牌"
+              : "正在确定先手"
+          : localPresentation.stage === "discard"
+            ? "正在暗弃一张牌"
+            : "正在依次摸牌";
+      el.turnDescription.textContent = "发牌完成后才开放本轮下注。";
+      el.waitingTitle.textContent = "牌正在从牌堆发出";
+      el.waitingDescription.textContent = "按住节奏观察每位玩家的牌。";
       return;
     }
 
@@ -787,8 +1044,65 @@
     updateRaiseDisplay();
   }
 
+  function renderLocalEquity() {
+    const human = game.players[0];
+    if (
+      localPresentation ||
+      !["bet1", "bet2"].includes(game.phase) ||
+      human.folded ||
+      human.eliminated
+    ) {
+      el.localEquityPanel.hidden = true;
+      return;
+    }
+    const signature = [
+      game.handNo,
+      game.phase,
+      ...game.players
+        .filter((player) => !player.eliminated && !player.folded)
+        .map(
+          (player) =>
+            `${player.seat}:${player.upCard?.id || ""}:${
+              player.drawCard?.id || ""
+            }`
+        ),
+      human.holeCard?.id || ""
+    ].join("|");
+    if (!localEquityCache || localEquityCache.signature !== signature) {
+      localEquityCache = {
+        signature,
+        result: Engine.estimateEquityByPlayer(game, 0, 400)
+      };
+    }
+    const equity = localEquityCache.result;
+    if (!equity) {
+      el.localEquityPanel.hidden = true;
+      return;
+    }
+    const cards = [human.holeCard, human.upCard, human.drawCard].filter(Boolean);
+    el.localEquityHand.textContent =
+      cards.length === 3
+        ? Engine.evaluateHand(cards).description
+        : `${cards.length} 张已知牌`;
+    el.localEquityBars.innerHTML = equity.players
+      .map((entry) => {
+        const player = game.players[entry.playerIndex];
+        return `
+          <div class="equity-row">
+            <span class="equity-name ${player.isHuman ? "is-self" : ""}">${escapeHtml(
+              player.isHuman ? "你" : player.name
+            )}</span>
+            <span class="equity-track"><span class="equity-fill" style="width:${entry.equity}%"></span></span>
+            <span class="equity-value">${entry.equity}%</span>
+          </div>
+        `;
+      })
+      .join("");
+    el.localEquityPanel.hidden = false;
+  }
+
   function renderResults() {
-    if (game.phase !== "complete" || !game.summary) {
+    if (localPresentation || game.phase !== "complete" || !game.summary) {
       return;
     }
     const summary = game.summary;
@@ -879,6 +1193,7 @@
     renderCenter();
     renderTurnPanel();
     renderResults();
+    renderLocalEquity();
     applyPreferenceUi();
     recordCompletedHand();
     scheduleAiTurn();
@@ -886,7 +1201,7 @@
   }
 
   function recordCompletedHand() {
-    if (game.phase !== "complete" || !game.summary) {
+    if (localPresentation || game.phase !== "complete" || !game.summary) {
       return;
     }
     const recordKey = `${game.gameId}:${game.handNo}`;
@@ -927,6 +1242,7 @@
     if (
       currentScreen !== "game" ||
       !game ||
+      localPresentation ||
       !["bet1", "bet2"].includes(game.phase) ||
       game.actorIndex === null ||
       game.players[game.actorIndex].isHuman
@@ -942,12 +1258,14 @@
       if (
         currentScreen !== "game" ||
         !game ||
+        localPresentation ||
         game.actorIndex !== actorAtSchedule ||
         !["bet1", "bet2"].includes(game.phase)
       ) {
         return;
       }
       try {
+        const phaseBefore = game.phase;
         const action = Engine.chooseAiAction(
           game,
           game.actorIndex,
@@ -963,9 +1281,21 @@
         ) {
           playSound("chip");
         }
-        renderAll();
-        if (game.phase === "complete") {
-          playResultSound();
+        const drawStarted =
+          phaseBefore === "bet1" &&
+          game.phase !== "bet1" &&
+          game.players.some((player) => Boolean(player.drawCard));
+        if (drawStarted) {
+          startLocalDrawPresentation(() => {
+            if (game.phase === "complete") {
+              playResultSound();
+            }
+          });
+        } else {
+          renderAll();
+          if (game.phase === "complete") {
+            playResultSound();
+          }
         }
       } catch (error) {
         console.error("AI 行动失败", error);
@@ -979,12 +1309,25 @@
       return;
     }
     try {
+      const phaseBefore = game.phase;
       Engine.performAction(game, action);
       persist();
       playSound("chip");
-      renderAll();
-      if (game.phase === "complete") {
-        playResultSound();
+      const drawStarted =
+        phaseBefore === "bet1" &&
+        game.phase !== "bet1" &&
+        game.players.some((player) => Boolean(player.drawCard));
+      if (drawStarted) {
+        startLocalDrawPresentation(() => {
+          if (game.phase === "complete") {
+            playResultSound();
+          }
+        });
+      } else {
+        renderAll();
+        if (game.phase === "complete") {
+          playResultSound();
+        }
       }
     } catch (error) {
       console.error(error);
@@ -1009,16 +1352,14 @@
       lastRenderedPhase = "";
       el.resultDetails.open = false;
       persist();
-      playSound("deal");
-      renderAll();
+      startLocalInitialPresentation(() => renderAll());
       showToast("新牌局开始，祝你这次赢到最后");
       return;
     }
     Engine.startNextHand(game);
     persist();
     el.resultDetails.open = false;
-    playSound("deal");
-    renderAll();
+    startLocalInitialPresentation(() => renderAll());
   }
 
   function showToast(message) {
@@ -1116,6 +1457,7 @@
 
   function leaveTable() {
     clearAiTimer();
+    clearLocalPresentation();
     persist();
     renderLobby();
   }
@@ -1134,6 +1476,7 @@
       console.warn("清除本地存档失败", error);
     }
     game = null;
+    clearLocalPresentation();
     stats = Object.assign({}, emptyStats);
     prefs = Object.assign({}, defaultPrefs);
     selectedPlayerCount = 6;
@@ -1157,6 +1500,10 @@
 
   function toggleMotion() {
     prefs.motion = !prefs.motion;
+    if (!prefs.motion && localPresentation) {
+      clearLocalPresentation();
+      renderAll();
+    }
     applyPreferenceUi();
     if (game) {
       persist();
@@ -1213,7 +1560,7 @@
       if (game && game.phase === "ready") {
         Engine.startNextHand(game);
         persist();
-        renderAll();
+        startLocalInitialPresentation(() => renderAll());
       }
     });
     el.nextHandButton.addEventListener("click", nextHand);

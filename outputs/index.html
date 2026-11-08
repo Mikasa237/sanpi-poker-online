@@ -259,6 +259,18 @@
               </div>
             </section>
 
+            <section id="localEquityPanel" class="local-equity-panel" hidden>
+              <div class="local-equity-heading">
+                <div>
+                  <span>当前牌力</span>
+                  <strong id="localEquityHand">等待发牌</strong>
+                </div>
+                <span>公开信息估算</span>
+              </div>
+              <div id="localEquityBars" class="local-equity-bars"></div>
+              <p>赢面包含胜率和平局分池份额，不读取对手暗牌。</p>
+            </section>
+
             <section id="resultPanel" class="result-panel" hidden aria-live="polite">
               <div class="result-heading">
                 <div>
@@ -309,7 +321,7 @@
             <h3>每手流程</h3>
             <ol>
               <li>所有人先下 10 底注，再依次收到一张暗牌和一张明牌。</li>
-              <li>明牌最大者先下注，随后按顺序跟注、加注、全下或弃牌。</li>
+              <li>除赖子外，明牌最大者先下注；若所有明牌都是赖子，则由庄家下一位先手。</li>
               <li>第一轮结束暗弃一张，从先手位置起依次公开摸一张。</li>
               <li>完成第二轮下注后开牌；只剩一人时直接收下底池。</li>
             </ol>

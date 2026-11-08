@@ -8,7 +8,21 @@ const Engine = require("../outputs/engine.js");
 const { createGameServer } = require("../outputs/server.js");
 
 async function startServer(options = {}) {
-  const app = createGameServer(options);
+  const app = createGameServer(
+    Object.assign(
+      {
+        dealTimings: {
+          stepMs: 5,
+          roundGapMs: 5,
+          openingPauseMs: 5,
+          discardMs: 5,
+          drawStepMs: 5,
+          drawFinishMs: 5
+        }
+      },
+      options
+    )
+  );
   const address = await app.start(0, "127.0.0.1");
   return {
     app,
@@ -484,7 +498,9 @@ test("completed hands automatically start the next hand", async (t) => {
 
   hostClient.send({ type: "host:start" });
   let state = await hostClient.waitFor(
-    (message) => message.room?.game?.phase === "bet1"
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
   );
   const firstHand = state.room.game.handNo;
   let actionCount = 0;
@@ -504,6 +520,7 @@ test("completed hands automatically start the next hand", async (t) => {
     state = await hostClient.waitFor(
       (message) =>
         message.room?.game &&
+        !message.room.game.presentation &&
         (message.room.game.actorIndex !== previousActor ||
           message.room.game.phase !== previousPhase)
     );
@@ -523,6 +540,251 @@ test("completed hands automatically start the next hand", async (t) => {
     2500
   );
   assert.equal(nextHandState.room.status, "playing");
+  hostClient.close();
+  guestClient.close();
+});
+
+test("uploaded avatars are validated, served, and broadcast to the room", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const png =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const created = await request(server.baseUrl, "/api/rooms", {
+    name: "头像测试",
+    seatCap: 2,
+    avatar: png
+  });
+  assert.equal(created.response.status, 201, created.payload.error);
+  const client = await createClient(
+    server.baseUrl,
+    created.payload.roomCode,
+    created.payload.token
+  );
+  const state = await client.waitFor(
+    (message) => message.type === "room:state"
+  );
+  assert.match(state.room.self.avatarUrl, /^\/api\/avatars\/avatar_/);
+  const avatarResponse = await fetch(`${server.baseUrl}${state.room.self.avatarUrl}`);
+  assert.equal(avatarResponse.status, 200);
+  assert.equal(avatarResponse.headers.get("content-type"), "image/png");
+  assert.ok((await avatarResponse.arrayBuffer()).byteLength > 0);
+
+  const update = await fetch(`${server.baseUrl}/api/profile/avatar`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${created.payload.token}`
+    },
+    body: JSON.stringify({ avatar: "preset:fox" })
+  });
+  assert.equal(update.status, 200);
+  assert.equal((await update.json()).avatarUrl, "preset:fox");
+
+  const invalid = await request(server.baseUrl, "/api/rooms", {
+    name: "非法头像",
+    seatCap: 2,
+    avatar: "data:image/png;base64,bm90LWFuLWltYWdl"
+  });
+  assert.equal(invalid.response.status, 400);
+  client.close();
+});
+
+test("room chat, quick phrases, emotes and host moderation work", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "房主", 2);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "访客");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  hostClient.send({ type: "host:start" });
+  await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" && !message.room.game.presentation
+  );
+
+  guestClient.send({
+    type: "chat:send",
+    kind: "text",
+    text: "大家好"
+  });
+  const chat = await hostClient.waitFor(
+    (message) => message.type === "room:chat"
+  );
+  assert.equal(chat.message.text, "大家好");
+  assert.equal(chat.message.userId, guestJoin.payload.userId);
+
+  guestClient.send({
+    type: "chat:send",
+    kind: "quick",
+    phraseId: "hurry"
+  });
+  const rateError = await guestClient.waitFor(
+    (message) => message.type === "error"
+  );
+  assert.match(rateError.message, /太快/);
+
+  hostClient.send({
+    type: "host:chat:mute",
+    targetId: guestJoin.payload.userId,
+    muted: true
+  });
+  await guestClient.waitFor(
+    (message) => message.room?.self?.chatMuted === true
+  );
+  guestClient.send({
+    type: "chat:send",
+    kind: "text",
+    text: "还能说话吗"
+  });
+  const muteError = await guestClient.waitFor(
+    (message) => message.type === "error"
+  );
+  assert.match(muteError.message, /禁言/);
+
+  hostClient.send({
+    type: "host:chat:clear"
+  });
+  const cleared = await guestClient.waitFor(
+    (message) => message.type === "room:chat-history"
+  );
+  assert.deepEqual(cleared.messages, []);
+
+  hostClient.send({
+    type: "host:chat:mute",
+    targetId: guestJoin.payload.userId,
+    muted: false
+  });
+  await guestClient.waitFor(
+    (message) => message.room?.self?.chatMuted === false
+  );
+  guestClient.send({
+    type: "emote:throw",
+    targetId: hostRoom.userId,
+    item: "tomato"
+  });
+  const emote = await hostClient.waitFor(
+    (message) => message.type === "room:emote"
+  );
+  assert.equal(emote.message.item, "tomato");
+  assert.equal(emote.message.targetId, hostRoom.userId);
+
+  hostClient.close();
+  guestClient.close();
+});
+
+test("dealing presentation masks cards and blocks betting until finished", async (t) => {
+  const server = await startServer({
+    dealTimings: {
+      stepMs: 40,
+      roundGapMs: 40,
+      openingPauseMs: 40,
+      discardMs: 40,
+      drawStepMs: 40,
+      drawFinishMs: 40
+    }
+  });
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "房主", 2);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "访客");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  hostClient.send({ type: "host:start" });
+  const dealing = await hostClient.waitFor(
+    (message) =>
+      message.room?.status === "dealing" &&
+      message.room.game?.presentation?.kind === "initial"
+  );
+  assert.equal(dealing.room.game.phase, "dealing");
+  assert.equal(dealing.room.game.actorIndex, null);
+  assert.equal(
+    dealing.room.game.players.every((player) => player.upCard === null),
+    true
+  );
+  hostClient.send({
+    type: "action",
+    handNo: dealing.room.game.handNo,
+    requestId: "during-deal",
+    action: { type: "fold" }
+  });
+  const error = await hostClient.waitFor(
+    (message) => message.type === "error"
+  );
+  assert.match(error.message, /正在发牌/);
+
+  const ready = await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
+  );
+  assert.equal(ready.room.status, "playing");
+  assert.ok(ready.room.game.players[0].holeCard);
+  assert.equal(ready.room.game.players[1].holeCard, null);
+  assert.ok(ready.room.game.players.every((player) => player.upCard));
+  assert.equal(ready.room.game.equity.players.reduce(
+    (sum, player) => sum + player.equity,
+    0
+  ), 100);
+
+  const firstActorId = actorId(ready.room.game);
+  const firstActorClient =
+    firstActorId === hostRoom.userId ? hostClient : guestClient;
+  const firstLegal = Engine.getLegalActions(
+    ready.room.game,
+    ready.room.game.actorIndex
+  );
+  firstActorClient.send({
+    type: "action",
+    handNo: ready.room.game.handNo,
+    requestId: "begin-draw-presentation",
+    action: firstLegal.call
+      ? { type: "call" }
+      : { type: "raise", amount: firstLegal.raise.min }
+  });
+  const afterFirstAction = await hostClient.waitFor(
+    (message) =>
+      message.room?.game &&
+      !message.room.game.presentation &&
+      message.room.game.actorIndex !== ready.room.game.actorIndex
+  );
+  const secondActorId = actorId(afterFirstAction.room.game);
+  const secondActorClient =
+    secondActorId === hostRoom.userId ? hostClient : guestClient;
+  secondActorClient.send({
+    type: "action",
+    handNo: afterFirstAction.room.game.handNo,
+    requestId: "show-draw-presentation",
+    action: { type: "call" }
+  });
+  const drawing = await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.presentation?.kind === "draw" &&
+      message.room.game.phase === "drawing"
+  );
+  assert.equal(
+    drawing.room.game.players.every((player) => player.drawCard === null),
+    true
+  );
+  assert.equal(drawing.room.game.discardCard, null);
+  assert.equal(drawing.room.game.hasDiscard, true);
   hostClient.close();
   guestClient.close();
 });

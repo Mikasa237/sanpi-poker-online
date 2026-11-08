@@ -1791,6 +1791,118 @@ input[type="range"]::-moz-range-thumb {
   font-size: 0.84rem;
 }
 
+.local-equity-panel {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background:
+    linear-gradient(155deg, rgba(82, 63, 38, 0.12), transparent 58%),
+    rgba(255, 255, 255, 0.022);
+}
+
+.local-equity-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.local-equity-heading span,
+.local-equity-heading strong {
+  display: block;
+}
+
+.local-equity-heading span {
+  color: var(--ink-dim);
+  font-size: 0.6rem;
+}
+
+.local-equity-heading strong {
+  margin-top: 3px;
+  color: var(--gold-bright);
+  font-family: var(--serif-font);
+  font-size: 0.86rem;
+}
+
+.local-equity-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.local-equity-panel > p {
+  margin: 10px 0 0;
+  color: var(--ink-dim);
+  font-size: 0.58rem;
+  line-height: 1.55;
+}
+
+.equity-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 35px;
+  align-items: center;
+  gap: 7px;
+}
+
+.equity-name {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.equity-name.is-self {
+  color: var(--gold-bright);
+  font-weight: 800;
+}
+
+.equity-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.equity-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4d9e7d, #dfbb68);
+}
+
+.equity-value {
+  color: var(--gold);
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.dealing-flight-card {
+  position: fixed;
+  z-index: 45;
+  width: 42px;
+  height: 60px;
+  pointer-events: none;
+  transform-origin: center;
+  filter: drop-shadow(0 9px 12px rgba(0, 0, 0, 0.38));
+}
+
+.card-flip-in {
+  animation: cardFlipIn 360ms ease both;
+}
+
+@keyframes cardFlipIn {
+  from {
+    opacity: 0.6;
+    transform: perspective(500px) rotateY(90deg) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: perspective(500px) rotateY(0deg) translateY(0);
+  }
+}
+
 .thinking-orbit {
   position: relative;
   flex: 0 0 35px;

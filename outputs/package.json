@@ -1,6 +1,6 @@
 {
   "name": "sanpi-poker-online",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "三皮牌局单机与联机服务",
   "main": "server.js",

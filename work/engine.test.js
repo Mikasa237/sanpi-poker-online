@@ -433,3 +433,69 @@ test("online seat synchronization preserves chips and seats new players fresh", 
   assert.equal(state.players[2].stack, 1000);
   assert.equal(state.players[3].eliminated, true);
 });
+
+test("wildcards are skipped when choosing the first bettor", () => {
+  const state = Engine.createGame({ seed: 1101, playerCount: 4 });
+  const wild = card("L", null, "A");
+  const ace = card("A", "D", "A");
+  state.dealerIndex = 0;
+  state.players.forEach((player) => {
+    player.upCard = card("5", "D", "A");
+  });
+  state.players[1].upCard = wild;
+  state.players[2].upCard = ace;
+  state.players[3].upCard = card("K", "S", "A");
+  assert.equal(Engine.findOpeningPlayer(state, [1, 2, 3, 0]), 2);
+  assert.equal(state.openingFallback, false);
+});
+
+test("all-wild opening falls back to the player after the dealer", () => {
+  const state = Engine.createGame({
+    seed: 1102,
+    mode: "online",
+    playerCount: 2,
+    onlinePlayers: [
+      { id: "a", name: "甲" },
+      { id: "b", name: "乙" }
+    ]
+  });
+  state.dealerIndex = 0;
+  state.players.forEach((player) => {
+    player.upCard = card("5", "D", "A");
+  });
+  state.players[0].upCard = card("L", null, "A");
+  state.players[1].upCard = card("L", null, "B");
+  assert.equal(Engine.findOpeningPlayer(state, [1, 0]), 1);
+  assert.equal(state.openingFallback, true);
+});
+
+test("public-information equity sums to 100 without peeking at opponent holes", () => {
+  const state = Engine.createGame({
+    seed: 1103,
+    mode: "online",
+    playerCount: 4,
+    onlinePlayers: [
+      { id: "self", name: "我" },
+      { id: "b", name: "乙" },
+      { id: "c", name: "丙" },
+      { id: "d", name: "丁" }
+    ]
+  });
+  Engine.startNextHand(state);
+  const equity = Engine.estimateEquityByPlayer(state, 0, 180);
+  assert.ok(equity);
+  assert.equal(
+    equity.players.reduce((sum, player) => sum + player.equity, 0),
+    100
+  );
+
+  const swapped = Engine.clone(state);
+  const firstOpponentHole = swapped.players[1].holeCard;
+  swapped.players[1].holeCard = swapped.players[2].holeCard;
+  swapped.players[2].holeCard = firstOpponentHole;
+  const equityAfterSwap = Engine.estimateEquityByPlayer(swapped, 0, 180);
+  assert.deepEqual(
+    equityAfterSwap.players.map((entry) => [entry.playerId, entry.equity]),
+    equity.players.map((entry) => [entry.playerId, entry.equity])
+  );
+});
