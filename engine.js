@@ -315,6 +315,8 @@
       deck: [],
       discardCard: null,
       openerIndex: null,
+      openingFallback: false,
+      dealOrder: [],
       actorIndex: null,
       currentBet: 0,
       minRaise: Math.max(1, Number(opts.minBet) || DEFAULTS.minBet),
@@ -382,9 +384,23 @@
   }
 
   function findOpeningPlayer(state, order) {
-    let best = order[0];
-    for (let i = 1; i < order.length; i += 1) {
-      const candidate = order[i];
+    const eligible = order.filter(
+      (index) =>
+        state.players[index].upCard &&
+        state.players[index].upCard.kind !== "wild"
+    );
+    if (eligible.length === 0) {
+      const fallback = seatOrder(
+        state.players.length,
+        (state.dealerIndex + 1) % state.players.length
+      ).find((index) => !state.players[index].eliminated);
+      state.openingFallback = true;
+      return fallback;
+    }
+    state.openingFallback = false;
+    let best = eligible[0];
+    for (let i = 1; i < eligible.length; i += 1) {
+      const candidate = eligible[i];
       if (
         compareOpeningCards(
           state.players[candidate].upCard,
@@ -505,6 +521,7 @@
       state.players.length,
       (state.dealerIndex + 1) % state.players.length
     ).filter((index) => !state.players[index].eliminated);
+    state.dealOrder = dealOrder.slice();
     dealOrder.forEach((index) => {
       state.players[index].holeCard = state.deck.shift();
     });
@@ -528,7 +545,9 @@
       state,
       "opening",
       state.openerIndex,
-      `${opener.name} 以明牌 ${cardText(opener.upCard)} 取得先手。`
+      state.openingFallback
+        ? `明牌均为赖子，按庄家顺序由 ${opener.name} 先下注。`
+        : `${opener.name} 以明牌 ${cardText(opener.upCard)} 取得先手。`
     );
     if (
       actionableIndices(state.players).length <= 1 ||
@@ -1223,6 +1242,117 @@
     return equity / trials;
   }
 
+  function estimateEquityByPlayer(state, viewerIndex, trials) {
+    const sampleCount = Math.max(40, Math.min(1000, Number(trials) || 400));
+    const viewer = state.players[viewerIndex];
+    const active = state.players
+      .filter((player) => !player.eliminated && !player.folded)
+      .map((player) => player.seat);
+    if (!viewer || viewer.folded || active.length === 0) {
+      return null;
+    }
+    if (active.length === 1) {
+      return {
+        sampleCount,
+        players: active.map((index) => ({
+          playerIndex: index,
+          playerId: state.players[index].id,
+          name: state.players[index].name,
+          equity: 100
+        }))
+      };
+    }
+
+    const knownIds = new Set();
+    state.players.forEach((player) => {
+      if (player.upCard) {
+        knownIds.add(player.upCard.id);
+      }
+      if (player.drawCard) {
+        knownIds.add(player.drawCard.id);
+      }
+    });
+    if (viewer.holeCard) {
+      knownIds.add(viewer.holeCard.id);
+    }
+    const unknown = buildDeck().filter((card) => !knownIds.has(card.id));
+    let seed = state.seed >>> 0;
+    seed ^= Math.imul(state.handNo + 1, 0x9e3779b1);
+    seed ^= Math.imul(viewerIndex + 1, 0x85ebca6b);
+    Array.from(viewer.id).forEach((character) => {
+      seed ^= Math.imul(character.charCodeAt(0), 0xc2b2ae35);
+    });
+    const rng = { value: seed >>> 0 };
+    const equity = new Map(active.map((index) => [index, 0]));
+
+    for (let trial = 0; trial < sampleCount; trial += 1) {
+      const pool = shuffleForSampling(unknown.slice(), rng);
+      let cursor = 0;
+      const evaluations = new Map();
+      active.forEach((index) => {
+        const player = state.players[index];
+        const cards = [];
+        if (index === viewerIndex && player.holeCard) {
+          cards.push(player.holeCard);
+        }
+        if (player.upCard) {
+          cards.push(player.upCard);
+        }
+        if (player.drawCard) {
+          cards.push(player.drawCard);
+        }
+        while (cards.length < 3) {
+          cards.push(pool[cursor]);
+          cursor += 1;
+        }
+        evaluations.set(index, evaluateHand(cards.slice(0, 3)));
+      });
+      let bestKey = null;
+      let winners = [];
+      active.forEach((index) => {
+        const key = evaluations.get(index).key;
+        if (!bestKey || compareNumberArrays(key, bestKey) > 0) {
+          bestKey = key;
+          winners = [index];
+        } else if (compareNumberArrays(key, bestKey) === 0) {
+          winners.push(index);
+        }
+      });
+      const share = 1 / winners.length;
+      winners.forEach((index) => {
+        equity.set(index, equity.get(index) + share);
+      });
+    }
+
+    const exact = active.map((index) => ({
+      playerIndex: index,
+      playerId: state.players[index].id,
+      name: state.players[index].name,
+      exact: (equity.get(index) / sampleCount) * 100
+    }));
+    const rounded = exact.map((entry) => ({
+      ...entry,
+      equity: Math.floor(entry.exact),
+      fraction: entry.exact - Math.floor(entry.exact)
+    }));
+    let remainder = 100 - rounded.reduce((sum, entry) => sum + entry.equity, 0);
+    rounded
+      .slice()
+      .sort((left, right) => right.fraction - left.fraction)
+      .forEach((entry) => {
+        if (remainder > 0) {
+          entry.equity += 1;
+          remainder -= 1;
+        }
+      });
+    return {
+      sampleCount,
+      players: rounded
+        .map(({ fraction, ...entry }) => entry)
+        .sort((left, right) => right.equity - left.equity)
+    };
+  }
+
   function quickHandStrength(state, playerIndex) {
     const player = state.players[playerIndex];
     const cards = [player.holeCard, player.upCard, player.drawCard].filter(Boolean);
@@ -1367,11 +1497,13 @@
     performAction,
     evaluateHand,
     compareEvaluations,
+    findOpeningPlayer,
     settlePots,
     updateEliminations,
     syncOnlineSeats,
     chooseAiAction,
     estimateEquity,
+    estimateEquityByPlayer,
     currentActor,
     phaseLabel,
     aliveIndices,

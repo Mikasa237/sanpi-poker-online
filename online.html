@@ -11,8 +11,8 @@
       content="三皮牌局联机房间：创建链接，邀请最多十名好友实时对战。"
     />
     <title>三皮牌局 · 联机</title>
-    <link rel="stylesheet" href="/styles.css?v=3" />
-    <link rel="stylesheet" href="/online.css?v=3" />
+    <link rel="stylesheet" href="/styles.css?v=5" />
+    <link rel="stylesheet" href="/online.css?v=5" />
   </head>
   <body class="online-body">
     <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -58,6 +58,17 @@
                     required
                   />
                 </label>
+                <div class="profile-picker">
+                  <span class="online-field-label">选择头像</span>
+                  <div class="avatar-preview-row">
+                    <div id="createAvatarPreview" class="profile-avatar-preview"></div>
+                    <label class="upload-button">
+                      上传图片
+                      <input id="createAvatarFile" type="file" accept="image/png,image/jpeg,image/webp" />
+                    </label>
+                  </div>
+                  <div id="createPresetAvatars" class="avatar-preset-grid"></div>
+                </div>
                 <label class="online-field">
                   <span>最多座位</span>
                   <select id="createSeatCap" name="seatCap">
@@ -93,6 +104,17 @@
                     required
                   />
                 </label>
+                <div class="profile-picker">
+                  <span class="online-field-label">选择头像</span>
+                  <div class="avatar-preview-row">
+                    <div id="joinAvatarPreview" class="profile-avatar-preview"></div>
+                    <label class="upload-button">
+                      上传图片
+                      <input id="joinAvatarFile" type="file" accept="image/png,image/jpeg,image/webp" />
+                    </label>
+                  </div>
+                  <div id="joinPresetAvatars" class="avatar-preset-grid"></div>
+                </div>
                 <button id="joinRoomButton" class="primary-button primary-button-large" type="submit">
                   进入房间
                 </button>
@@ -111,6 +133,7 @@
         <header class="online-topbar">
           <div class="online-brand">
             <a class="brand-mark" href="/index.html" aria-label="返回首页">三</a>
+            <div id="selfProfileAvatar" class="header-profile-avatar"></div>
             <div>
               <strong>三皮牌局</strong>
               <span>联机房间 <b id="headerRoomCode">------</b></span>
@@ -121,7 +144,9 @@
               <i aria-hidden="true"></i>已连接
             </span>
             <button id="copyLinkButton" class="ghost-button" type="button">复制链接</button>
-            <button id="renameButton" class="ghost-button" type="button">修改昵称</button>
+            <button id="renameButton" class="ghost-button" type="button">编辑资料</button>
+            <button id="onlineSoundToggle" class="icon-button" type="button" aria-pressed="true" title="声音开关">♪</button>
+            <button id="onlineMotionToggle" class="icon-button" type="button" aria-pressed="true" title="动画开关">◌</button>
             <button id="rulesButton" class="ghost-button" type="button">规则</button>
             <button id="leaveRoomButton" class="ghost-button danger-ghost" type="button">
               离开
@@ -315,6 +340,60 @@
               </div>
             </section>
 
+            <section class="social-dock">
+              <div class="social-tabs" role="tablist" aria-label="牌桌附加功能">
+                <button id="equityTab" class="social-tab is-active" type="button" role="tab" aria-selected="true">
+                  牌力图
+                </button>
+                <button id="chatTab" class="social-tab" type="button" role="tab" aria-selected="false">
+                  公共聊天
+                  <span id="chatUnreadBadge" class="chat-unread" hidden>0</span>
+                </button>
+              </div>
+
+              <div id="equityPanel" class="social-panel">
+                <div class="equity-heading">
+                  <div>
+                    <span>当前手牌</span>
+                    <strong id="equityHandLabel">等待发牌</strong>
+                  </div>
+                  <span id="equitySample" class="equity-sample">基于公开信息估算</span>
+                </div>
+                <div id="equityBars" class="equity-bars"></div>
+                <p class="equity-note">赢面为胜率加平局分池份额，不包含下注策略，也不会读取对手暗牌。</p>
+              </div>
+
+              <div id="chatPanel" class="social-panel" hidden>
+                <div id="chatDisabledNotice" class="chat-disabled-notice" hidden>房主已关闭聊天和互动。</div>
+                <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
+                <div id="quickPhraseBar" class="quick-phrase-bar"></div>
+                <div class="emote-row">
+                  <select id="emoteTarget" aria-label="投掷目标"></select>
+                  <button type="button" class="emote-button" data-emote="egg">🥚 鸡蛋</button>
+                  <button type="button" class="emote-button" data-emote="tomato">🍅 番茄</button>
+                  <button type="button" class="emote-button" data-emote="flower">🌹 鲜花</button>
+                </div>
+                <form id="chatForm" class="chat-form">
+                  <input id="chatInput" maxlength="60" placeholder="说点什么…" autocomplete="off" />
+                  <button id="chatSendButton" class="primary-button" type="submit">发送</button>
+                </form>
+                <div class="chat-footer">
+                  <button id="chatLocalMuteButton" class="text-button" type="button">本地静音</button>
+                  <span id="chatStatusText">最近 50 条消息仅在本房间保留</span>
+                </div>
+                <div id="hostChatControls" class="host-chat-controls" hidden>
+                  <span class="section-kicker">房主聊天管理</span>
+                  <div class="host-target-actions">
+                    <select id="chatModerationTarget" aria-label="聊天管理目标"></select>
+                    <button id="hostMuteButton" class="secondary-button" type="button">禁言</button>
+                    <button id="hostUnmuteButton" class="secondary-button" type="button">解除禁言</button>
+                    <button id="hostClearChatButton" class="secondary-button" type="button">清空聊天</button>
+                    <button id="hostToggleChatButton" class="secondary-button" type="button">关闭聊天</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
             <div class="hand-footnote">
               <span>底注 10</span>
               <span>房主可以手动处理掉线玩家</span>
@@ -338,6 +417,17 @@
           <span>新昵称</span>
           <input id="renameInput" maxlength="12" required autocomplete="nickname" />
         </label>
+        <div class="profile-picker">
+          <span class="online-field-label">修改头像</span>
+          <div class="avatar-preview-row">
+            <div id="renameAvatarPreview" class="profile-avatar-preview"></div>
+            <label class="upload-button">
+              上传图片
+              <input id="renameAvatarFile" type="file" accept="image/png,image/jpeg,image/webp" />
+            </label>
+          </div>
+          <div id="renamePresetAvatars" class="avatar-preset-grid"></div>
+        </div>
         <p id="renameError" class="entry-error" role="alert" hidden></p>
         <button class="primary-button primary-button-large" value="default" type="submit">
           保存昵称
@@ -356,7 +446,7 @@
         </header>
         <div class="rules-content">
           <section><h3>牌组与点数</h3><p>两副牌共 94 张。5–10 按面值，J=11、Q=12、K=13、A=14、2=15；黑白 JOKER=16、彩色 JOKER=17、赖子=18。</p></section>
-          <section><h3>每手流程</h3><p>每人先下 10 底注，获得一张暗牌和一张明牌。明牌最大者先下注，第一轮结束后公开摸第三张，再完成一轮下注并开牌。</p></section>
+          <section><h3>每手流程</h3><p>每人先下 10 底注，获得一张暗牌和一张明牌。赖子不参与先手争夺，由其余明牌最大者先下注；若明牌都是赖子，则由庄家下一位先手。</p></section>
           <section><h3>普通牌与三皮</h3><p>普通牌比较三张点数和。三皮等级为三张自然相同 &gt; 两张相同加赖子 &gt; 一张加两张赖子；同一等级中目标点数越小越大。</p></section>
           <section><h3>联机淘汰</h3><p>筹码归零后自动离开座位并成为旁观者。不会补筹码。最后一名有筹码的玩家赢下整桌。</p></section>
           <section><h3>掉线与房主</h3><p>掉线不自动弃牌。房主确认后可以跳过卡住的当前玩家；本手结束后将其移座。房主离开后会自动转让。</p></section>
@@ -366,7 +456,7 @@
 
     <div id="onlineToast" class="toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="/engine.js?v=3"></script>
-    <script src="/online.js?v=3"></script>
+    <script src="/engine.js?v=5"></script>
+    <script src="/online.js?v=5"></script>
   </body>
 </html>

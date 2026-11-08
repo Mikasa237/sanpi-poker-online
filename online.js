@@ -4,6 +4,20 @@
   const Engine = window.SanpiEngine;
   const TOKEN_PREFIX = "sanpi-online-token:";
   const NAME_KEY = "sanpi-online-name";
+  const AVATAR_KEY = "sanpi-online-avatar";
+  const PREF_KEY = "sanpi-online-preferences";
+  const PRESET_AVATARS = [
+    { id: "jester", emoji: "🃏", color: "#70435f" },
+    { id: "fox", emoji: "🦊", color: "#8d4d2f" },
+    { id: "cat", emoji: "🐱", color: "#5a5b78" },
+    { id: "tiger", emoji: "🐯", color: "#876231" },
+    { id: "rabbit", emoji: "🐰", color: "#795874" },
+    { id: "owl", emoji: "🦉", color: "#315d59" },
+    { id: "bear", emoji: "🐻", color: "#6b4a31" },
+    { id: "wolf", emoji: "🐺", color: "#445462" },
+    { id: "panda", emoji: "🐼", color: "#59635d" },
+    { id: "lion", emoji: "🦁", color: "#8b5b21" }
+  ];
   const ONLINE_LAYOUTS = {
     1: [{ x: 50, y: 18 }],
     2: [{ x: 17, y: 43 }, { x: 83, y: 43 }],
@@ -30,34 +44,34 @@
       { x: 91, y: 63 }
     ],
     7: [
-      { x: 8, y: 64 },
-      { x: 8, y: 40 },
-      { x: 28, y: 16 },
-      { x: 50, y: 11 },
-      { x: 72, y: 16 },
-      { x: 92, y: 40 },
-      { x: 92, y: 64 }
+      { x: 8, y: 68 },
+      { x: 8, y: 43 },
+      { x: 28, y: 17 },
+      { x: 50, y: 13 },
+      { x: 72, y: 17 },
+      { x: 92, y: 43 },
+      { x: 92, y: 68 }
     ],
     8: [
-      { x: 8, y: 65 },
-      { x: 7, y: 43 },
-      { x: 21, y: 23 },
-      { x: 36, y: 13 },
-      { x: 64, y: 13 },
-      { x: 79, y: 23 },
-      { x: 93, y: 43 },
-      { x: 92, y: 65 }
+      { x: 8, y: 69 },
+      { x: 8, y: 45 },
+      { x: 22, y: 20 },
+      { x: 42, y: 13 },
+      { x: 58, y: 13 },
+      { x: 78, y: 20 },
+      { x: 92, y: 45 },
+      { x: 92, y: 69 }
     ],
     9: [
-      { x: 8, y: 66 },
+      { x: 8, y: 70 },
       { x: 7, y: 45 },
-      { x: 18, y: 27 },
+      { x: 18, y: 16 },
       { x: 34, y: 14 },
-      { x: 50, y: 10 },
+      { x: 50, y: 14 },
       { x: 66, y: 14 },
-      { x: 82, y: 27 },
+      { x: 82, y: 16 },
       { x: 93, y: 45 },
-      { x: 92, y: 66 }
+      { x: 92, y: 70 }
     ]
   };
 
@@ -72,7 +86,26 @@
     intentionalClose: false,
     pendingAction: false,
     entryMode: "create",
-    countdownTimer: null
+    countdownTimer: null,
+    draftAvatars: {
+      create: "preset:jester",
+      join: "preset:jester",
+      rename: "preset:jester"
+    },
+    preferences: {
+      sound: true,
+      motion: true,
+      localChatMuted: false
+    },
+    activeSocialTab: "equity",
+    unreadChat: 0,
+    lastPresentationSequence: 0,
+    lastPresentationKey: "",
+    lastChatMessageId: null,
+    pendingChatBubble: null,
+    speechQueue: [],
+    speaking: false,
+    audioContext: null
   };
 
   const el = {};
@@ -89,12 +122,21 @@
     "createRoomButton",
     "joinName",
     "joinRoomButton",
+    "createAvatarPreview",
+    "createAvatarFile",
+    "createPresetAvatars",
+    "joinAvatarPreview",
+    "joinAvatarFile",
+    "joinPresetAvatars",
     "entryError",
     "roomScreen",
     "headerRoomCode",
     "connectionBadge",
+    "selfProfileAvatar",
     "copyLinkButton",
     "renameButton",
+    "onlineSoundToggle",
+    "onlineMotionToggle",
     "rulesButton",
     "leaveRoomButton",
     "lobbyArea",
@@ -162,9 +204,35 @@
     "hostRemoveButton",
     "hostTransferButton",
     "onlineRemainingText",
+    "equityTab",
+    "chatTab",
+    "chatUnreadBadge",
+    "equityPanel",
+    "equityHandLabel",
+    "equitySample",
+    "equityBars",
+    "chatPanel",
+    "chatDisabledNotice",
+    "chatMessages",
+    "quickPhraseBar",
+    "emoteTarget",
+    "chatForm",
+    "chatInput",
+    "chatSendButton",
+    "chatLocalMuteButton",
+    "chatStatusText",
+    "hostChatControls",
+    "chatModerationTarget",
+    "hostMuteButton",
+    "hostUnmuteButton",
+    "hostClearChatButton",
+    "hostToggleChatButton",
     "renameDialog",
     "renameForm",
     "renameInput",
+    "renameAvatarPreview",
+    "renameAvatarFile",
+    "renamePresetAvatars",
     "renameError",
     "closeRenameButton",
     "rulesDialog",
@@ -273,11 +341,178 @@
     }
   }
 
+  function loadPreferredAvatar() {
+    try {
+      return localStorage.getItem(AVATAR_KEY) || "preset:jester";
+    } catch {
+      return "preset:jester";
+    }
+  }
+
   function rememberName(name) {
     try {
       localStorage.setItem(NAME_KEY, name);
     } catch {
       // Naming still works for the current page.
+    }
+  }
+
+  function rememberAvatar(avatar) {
+    state.draftAvatars.create = avatar;
+    state.draftAvatars.join = avatar;
+    state.draftAvatars.rename = avatar;
+    try {
+      localStorage.setItem(AVATAR_KEY, avatar);
+    } catch {
+      showToast("头像没能保存到本地浏览器。");
+    }
+  }
+
+  function loadPreferences() {
+    try {
+      state.preferences = Object.assign(
+        state.preferences,
+        JSON.parse(localStorage.getItem(PREF_KEY) || "{}")
+      );
+    } catch {
+      // Defaults are already loaded.
+    }
+  }
+
+  function savePreferences() {
+    try {
+      localStorage.setItem(PREF_KEY, JSON.stringify(state.preferences));
+    } catch {
+      // Preferences remain active for the current page.
+    }
+  }
+
+  function presetAvatar(avatar) {
+    return (
+      PRESET_AVATARS.find((entry) => avatar === `preset:${entry.id}`) ||
+      PRESET_AVATARS[0]
+    );
+  }
+
+  function avatarMarkup(userOrAvatar, classes) {
+    const avatar =
+      typeof userOrAvatar === "string"
+        ? userOrAvatar
+        : userOrAvatar?.avatarUrl || "preset:jester";
+    const extra = classes || "";
+    if (avatar.startsWith("preset:")) {
+      const preset = presetAvatar(avatar);
+      return `<span class="avatar ${extra}" style="background:${preset.color}"><span class="avatar-glyph" aria-hidden="true">${preset.emoji}</span></span>`;
+    }
+    return `<span class="avatar ${extra}"><img class="avatar-image" src="${escapeHtml(
+      avatar
+    )}" alt="" referrerpolicy="no-referrer" /></span>`;
+  }
+
+  function renderProfileAvatar(container, avatar) {
+    if (!container) {
+      return;
+    }
+    if (avatar.startsWith("preset:")) {
+      const preset = presetAvatar(avatar);
+      container.textContent = preset.emoji;
+      container.style.background = preset.color;
+    } else {
+      container.style.background = "";
+      container.innerHTML = `<img class="avatar-image" src="${escapeHtml(
+        avatar
+      )}" alt="" referrerpolicy="no-referrer" />`;
+    }
+  }
+
+  function renderAvatarPickers() {
+    const pairs = [
+      ["create", el.createPresetAvatars],
+      ["join", el.joinPresetAvatars],
+      ["rename", el.renamePresetAvatars]
+    ];
+    pairs.forEach(([mode, container]) => {
+      if (!container) {
+        return;
+      }
+      container.innerHTML = PRESET_AVATARS.map(
+        (preset) =>
+          `<button type="button" class="avatar-preset-button ${
+            state.draftAvatars[mode] === `preset:${preset.id}`
+              ? "is-selected"
+              : ""
+          }" data-avatar-mode="${mode}" data-preset="${
+            preset.id
+          }" aria-label="选择${preset.emoji}头像">${preset.emoji}</button>`
+      ).join("");
+    });
+    renderProfileAvatar(el.createAvatarPreview, state.draftAvatars.create);
+    renderProfileAvatar(el.joinAvatarPreview, state.draftAvatars.join);
+    renderProfileAvatar(el.renameAvatarPreview, state.draftAvatars.rename);
+  }
+
+  async function compressAvatarFile(file) {
+    if (!file) {
+      return null;
+    }
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      throw new Error("头像只支持 PNG、JPEG 或 WebP。");
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      throw new Error("原始图片不能超过 5MB。");
+    }
+    let bitmap = null;
+    if (typeof createImageBitmap === "function") {
+      bitmap = await createImageBitmap(file, {
+        imageOrientation: "from-image"
+      }).catch(() => null);
+    }
+    if (!bitmap) {
+      const objectUrl = URL.createObjectURL(file);
+      bitmap = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("无法读取这张图片。"));
+        image.src = objectUrl;
+      }).finally(() => URL.revokeObjectURL(objectUrl));
+    }
+    if (!bitmap) {
+      throw new Error("无法读取这张图片。");
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const context = canvas.getContext("2d");
+    const size = Math.min(bitmap.width, bitmap.height);
+    const sx = (bitmap.width - size) / 2;
+    const sy = (bitmap.height - size) / 2;
+    context.drawImage(bitmap, sx, sy, size, size, 0, 0, 256, 256);
+    bitmap.close?.();
+    let dataUrl = canvas.toDataURL("image/webp", 0.82);
+    if (!dataUrl.startsWith("data:image/webp")) {
+      dataUrl = canvas.toDataURL("image/jpeg", 0.86);
+    }
+    if (dataUrl.length > 250_000) {
+      dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+    }
+    return dataUrl;
+  }
+
+  async function applyAvatarFile(mode, file) {
+    if (!file) {
+      return;
+    }
+    try {
+      const dataUrl = await compressAvatarFile(file);
+      state.draftAvatars[mode] = dataUrl;
+      renderAvatarPickers();
+    } catch (error) {
+      if (mode === "rename") {
+        el.renameError.textContent = error.message;
+        el.renameError.hidden = false;
+      } else {
+        setEntryError(error.message);
+      }
     }
   }
 
@@ -295,6 +530,9 @@
     el.createRoomPanel.hidden = mode !== "create";
     el.joinRoomPanel.hidden = mode !== "join";
     const preferredName = loadPreferredName();
+    const preferredAvatar = loadPreferredAvatar();
+    state.draftAvatars.create = preferredAvatar;
+    state.draftAvatars.join = preferredAvatar;
     if (mode === "create" && !el.createName.value) {
       el.createName.value = preferredName;
     }
@@ -304,6 +542,7 @@
         el.joinName.value = preferredName;
       }
     }
+    renderAvatarPickers();
     setEntryError(errorMessage || "");
   }
 
@@ -325,9 +564,14 @@
     const seatCap = Number(el.createSeatCap.value);
     el.createRoomButton.disabled = true;
     try {
-      const payload = await requestJson("/api/rooms", { name, seatCap });
+      const payload = await requestJson("/api/rooms", {
+        name,
+        seatCap,
+        avatar: state.draftAvatars.create
+      });
       saveSession(payload.roomCode, payload);
       rememberName(name);
+      rememberAvatar(state.draftAvatars.create);
       state.roomCode = payload.roomCode;
       history.replaceState({}, "", `/room/${payload.roomCode}`);
       showRoom();
@@ -351,10 +595,11 @@
     try {
       const payload = await requestJson(
         `/api/rooms/${state.roomCode}/join`,
-        { name }
+        { name, avatar: state.draftAvatars.join }
       );
       saveSession(state.roomCode, payload);
       rememberName(name);
+      rememberAvatar(state.draftAvatars.join);
       showRoom();
       connectSocket();
     } catch (error) {
@@ -442,6 +687,16 @@
         setConnection("connected", "已连接");
         showRoom();
         render();
+        flushChatBubble();
+      } else if (message.type === "room:chat") {
+        handleIncomingChat(message.message);
+      } else if (message.type === "room:emote") {
+        animateIncomingEmote(message.message);
+      } else if (message.type === "room:chat-history") {
+        if (state.room?.chat) {
+          state.room.chat.messages = message.messages;
+          renderChat();
+        }
       } else if (message.type === "error") {
         state.pendingAction = false;
         showToast(message.message || "操作失败");
@@ -489,6 +744,261 @@
     }
     state.socket.send(JSON.stringify(message));
     return true;
+  }
+
+  function ensureAudioContext() {
+    if (!state.preferences.sound || state.preferences.localChatMuted) {
+      return null;
+    }
+    if (!state.audioContext) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) {
+        return null;
+      }
+      state.audioContext = new AudioContext();
+    }
+    if (state.audioContext.state === "suspended") {
+      state.audioContext.resume().catch(() => {});
+    }
+    return state.audioContext;
+  }
+
+  function playTone(frequency, duration, volume, type) {
+    const context = ensureAudioContext();
+    if (!context) {
+      return;
+    }
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = type || "sine";
+    oscillator.frequency.setValueAtTime(frequency, context.currentTime);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(
+      volume,
+      context.currentTime + 0.015
+    );
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      context.currentTime + duration
+    );
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + duration + 0.03);
+  }
+
+  function playDealSound(slot) {
+    if (slot === "up") {
+      playTone(430, 0.05, 0.014, "triangle");
+    } else {
+      playTone(280, 0.045, 0.012, "triangle");
+    }
+  }
+
+  function playChatTone() {
+    playTone(680, 0.06, 0.012, "sine");
+  }
+
+  function playEmoteImpact(item) {
+    if (item === "flower") {
+      playTone(780, 0.13, 0.012, "sine");
+      window.setTimeout(() => playTone(980, 0.1, 0.008, "sine"), 80);
+      return;
+    }
+    playTone(item === "egg" ? 150 : 115, 0.09, 0.035, "square");
+    window.setTimeout(
+      () => playTone(item === "egg" ? 90 : 75, 0.12, 0.02, "triangle"),
+      50
+    );
+  }
+
+  function speakQuickPhrase(text) {
+    if (
+      !state.preferences.sound ||
+      state.preferences.localChatMuted ||
+      !("speechSynthesis" in window)
+    ) {
+      playChatTone();
+      return;
+    }
+    state.speechQueue.push(text);
+    if (state.speaking) {
+      return;
+    }
+    const speakNext = () => {
+      const next = state.speechQueue.shift();
+      if (!next) {
+        state.speaking = false;
+        return;
+      }
+      state.speaking = true;
+      const utterance = new SpeechSynthesisUtterance(next);
+      utterance.lang = "zh-CN";
+      utterance.rate = 1.02;
+      utterance.pitch = 1;
+      const voices = window.speechSynthesis.getVoices();
+      const chinese = voices.find((voice) => /^zh|Chinese|中文/i.test(`${voice.lang} ${voice.name}`));
+      if (chinese) {
+        utterance.voice = chinese;
+      }
+      utterance.onend = speakNext;
+      utterance.onerror = () => {
+        playChatTone();
+        speakNext();
+      };
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        playChatTone();
+        speakNext();
+      }
+    };
+    speakNext();
+  }
+
+  function handleIncomingChat(message) {
+    if (!message) {
+      return;
+    }
+    const isSelf = message.userId === state.room?.self?.id;
+    state.pendingChatBubble = {
+      userId: message.userId,
+      text:
+        message.kind === "emote"
+          ? `${message.item === "egg" ? "🥚" : message.item === "tomato" ? "🍅" : "🌹"} 投掷`
+          : message.text,
+      createdAt: Date.now()
+    };
+    if (!isSelf && message.kind === "quick") {
+      speakQuickPhrase(message.text);
+    } else if (!isSelf) {
+      playChatTone();
+    }
+    if (state.activeSocialTab !== "chat") {
+      state.unreadChat += 1;
+      renderChatUnread();
+    }
+  }
+
+  function flushChatBubble() {
+    if (!state.pendingChatBubble) {
+      return;
+    }
+    const bubble = state.pendingChatBubble;
+    state.pendingChatBubble = null;
+    const game = state.room?.game;
+    const playerIndex =
+      game?.players.findIndex((player) => player.id === bubble.userId) ?? -1;
+    if (playerIndex < 0) {
+      return;
+    }
+    const target =
+      document.querySelector(
+        `.seat[data-seat-index="${playerIndex}"]`
+      ) ||
+      (playerIndex === findSelfGameIndex(game)
+        ? document.querySelector(".human-hand-card")
+        : null);
+    if (!target) {
+      return;
+    }
+    target.querySelector(".seat-chat-bubble")?.remove();
+    const node = document.createElement("div");
+    node.className = "seat-chat-bubble";
+    node.textContent = bubble.text;
+    target.appendChild(node);
+    window.setTimeout(() => node.remove(), 3200);
+  }
+
+  function animateIncomingEmote(message) {
+    if (!message) {
+      return;
+    }
+    const game = state.room?.game;
+    if (!game) {
+      return;
+    }
+    const sourceIndex = game.players.findIndex(
+      (player) => player.id === message.userId
+    );
+    const targetIndex = game.players.findIndex(
+      (player) => player.id === message.targetId
+    );
+    if (sourceIndex < 0 || targetIndex < 0) {
+      return;
+    }
+    const sourceSelfIndex = findSelfGameIndex(game);
+    const source =
+      document.querySelector(`.seat[data-seat-index="${sourceIndex}"]`) ||
+      (sourceIndex === sourceSelfIndex
+        ? document.querySelector(".human-hand-card")
+        : null);
+    const target = document.querySelector(
+      `.seat[data-seat-index="${targetIndex}"]`
+    ) ||
+      (targetIndex === findSelfGameIndex(game)
+        ? document.querySelector(".human-hand-card")
+        : null);
+    if (!source || !target) {
+      return;
+    }
+    const from = source.getBoundingClientRect();
+    const to = target.getBoundingClientRect();
+    const item =
+      message.item === "egg" ? "🥚" : message.item === "tomato" ? "🍅" : "🌹";
+    const node = document.createElement("span");
+    node.className = "flying-emote";
+    node.textContent = item;
+    node.style.left = `${from.left + from.width / 2}px`;
+    node.style.top = `${from.top + from.height / 2}px`;
+    document.body.appendChild(node);
+    const animation = node.animate(
+      [
+        { transform: "translate(0, 0) scale(.8)", opacity: 0.4 },
+        {
+          transform: `translate(${(to.left - from.left) / 2}px, ${
+            Math.min(from.top, to.top) - from.top - 90
+          }px) scale(1.15) rotate(120deg)`,
+          opacity: 1,
+          offset: 0.55
+        },
+        {
+          transform: `translate(${to.left - from.left}px, ${
+            to.top - from.top
+          }px) scale(.65) rotate(260deg)`,
+          opacity: 0.8
+        }
+      ],
+      {
+        duration: prefsMotion() ? 680 : 1,
+        easing: "ease-in"
+      }
+    );
+    animation.finished.finally(() => {
+      node.remove();
+      playEmoteImpact(message.item);
+      if (target) {
+        const baseTransform = target.classList.contains("seat")
+          ? "translate(-50%, -50%)"
+          : "translate(0, 0)";
+        target.animate(
+          [
+            { transform: `${baseTransform} rotate(0)` },
+            { transform: `${baseTransform} rotate(-2deg) translateX(-4px)` },
+            { transform: `${baseTransform} rotate(2deg) translateX(4px)` },
+            { transform: `${baseTransform} rotate(0)` }
+          ],
+          { duration: prefsMotion() ? 260 : 1 }
+        );
+      }
+    });
+  }
+
+  function prefsMotion() {
+    return (
+      state.preferences.motion &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
   }
 
   function cardMarkup(card, options) {
@@ -637,12 +1147,13 @@
     return `
       <article
         class="${classes}"
+        data-seat-index="${index}"
         style="--seat-x:${position.x}%;--seat-y:${position.y}%"
         aria-label="${escapeHtml(player.name)}，${formatNumber(player.stack)} 筹码，${escapeHtml(status)}"
       >
         <div class="seat-badge-row">${dealer}${offline}${turn}</div>
         <div class="seat-topline">
-          <div class="avatar" aria-hidden="true">${escapeHtml(player.name.slice(0, 1))}</div>
+          ${avatarMarkup(rosterUser?.avatarUrl || "preset:jester")}
           <div class="seat-identity">
             <strong>${escapeHtml(player.name)}</strong>
             <span>${connected ? "在线" : "离线"} · 座位 ${index + 1}</span>
@@ -697,11 +1208,13 @@
     return `
       <article class="human-hand-card ${isCurrent ? "is-current" : ""} ${
         player.folded ? "is-folded" : ""
-      } ${player.eliminated ? "is-eliminated" : ""}">
+      } ${player.eliminated ? "is-eliminated" : ""}" data-seat-index="${player.seat}">
         <div class="human-hand-identity">
-          <div class="human-avatar avatar" aria-hidden="true">${escapeHtml(
-            player.name.slice(0, 1)
-          )}</div>
+          ${avatarMarkup(
+            state.room.users.find((user) => user.id === player.id)?.avatarUrl ||
+              "preset:jester",
+            "human-avatar"
+          )}
           <div>
             <strong>${escapeHtml(player.name)} 的手牌</strong>
             <span>${player.eliminated ? "筹码耗尽，已退出座位" : "底牌仅你可见"}</span>
@@ -753,12 +1266,92 @@
     );
   }
 
+  function animatePresentationCard(game) {
+    const presentation = game.presentation;
+    const last = presentation?.last;
+    if (!presentation || !last) {
+      return;
+    }
+    const key = `${game.handNo}:${presentation.kind}`;
+    if (
+      state.lastPresentationKey === key &&
+      state.lastPresentationSequence === last.sequence
+    ) {
+      return;
+    }
+    state.lastPresentationKey = key;
+    state.lastPresentationSequence = last.sequence;
+    if (!prefsMotion()) {
+      return;
+    }
+    const selfIndex = findSelfGameIndex(game);
+    const selector =
+      last.seat === selfIndex
+        ? `#onlineHumanHandZone .role-${last.slot} .playing-card`
+        : `.seat[data-seat-index="${last.seat}"] .role-${last.slot} .playing-card`;
+    const target = document.querySelector(selector);
+    const deck = document.querySelector(".online-table-shell .mini-deck");
+    if (!target || !deck) {
+      return;
+    }
+    const targetRect = target.getBoundingClientRect();
+    const deckRect = deck.getBoundingClientRect();
+    if (!targetRect.width || !deckRect.width) {
+      return;
+    }
+    const clone = document.createElement("div");
+    clone.className = "playing-card card-back dealing-flight-card";
+    clone.style.left = `${deckRect.left}px`;
+    clone.style.top = `${deckRect.top}px`;
+    clone.style.width = `${Math.min(42, targetRect.width)}px`;
+    clone.style.height = `${Math.min(60, targetRect.height)}px`;
+    document.body.appendChild(clone);
+    target.style.visibility = "hidden";
+    const deltaX = targetRect.left - deckRect.left;
+    const deltaY = targetRect.top - deckRect.top;
+    const animation = clone.animate(
+      [
+        { transform: "translate(0, 0) rotate(-8deg) scale(.8)", opacity: 0.35 },
+        {
+          transform: `translate(${deltaX * 0.52}px, ${
+            deltaY * 0.52 - 42
+          }px) rotate(5deg) scale(1.04)`,
+          opacity: 1,
+          offset: 0.55
+        },
+        {
+          transform: `translate(${deltaX}px, ${deltaY}px) rotate(0) scale(1)`,
+          opacity: 1
+        }
+      ],
+      { duration: 360, easing: "cubic-bezier(.22,.72,.25,1)" }
+    );
+    playDealSound(last.slot);
+    animation.finished
+      .catch(() => {})
+      .finally(() => {
+        clone.remove();
+        target.style.visibility = "";
+        target.classList.add("card-flip-in");
+      });
+  }
+
   function renderGameCenter(game) {
     const actor =
       game.actorIndex !== null ? game.players[game.actorIndex] : null;
     el.headerRoomCode.textContent = state.room.code;
     el.onlinePhaseText.textContent = game.tableOver
       ? "本局结束"
+      : game.presentation?.kind === "initial"
+        ? game.presentation.stage === "hole"
+          ? "正在发暗牌"
+          : game.presentation.stage === "up"
+            ? "正在发明牌"
+            : "正在确定先手"
+        : game.presentation?.kind === "draw"
+          ? game.presentation.stage === "discard"
+            ? "正在暗弃一张牌"
+            : "正在依次摸牌"
       : game.phase === "bet1"
         ? "第一轮下注"
         : game.phase === "bet2"
@@ -778,6 +1371,11 @@
     );
     if (game.tableOver) {
       el.onlineTableHint.textContent = game.tableOver.reason;
+    } else if (game.presentation) {
+      el.onlineTableHint.textContent =
+        game.presentation.kind === "initial"
+          ? "牌正从牌堆发往每位玩家，请稍候。"
+          : "第三张牌正在依次公开。";
     } else if (game.phase === "complete") {
       el.onlineTableHint.textContent = game.summary?.reason || "本手结束";
     } else if (actor) {
@@ -884,6 +1482,19 @@
       el.onlineTurnTitle.textContent = "选择你的行动";
       el.onlineTurnDescription.textContent =
         "服务器会验证金额和行动顺序，其他玩家的底牌不会下发到你的浏览器。";
+      el.hostSkipButton.hidden = true;
+      return;
+    }
+
+    if (game.presentation) {
+      el.onlineWaitingControls.hidden = false;
+      el.onlineTurnEyebrow.textContent = "发牌动画";
+      el.onlineTurnTitle.textContent =
+        game.presentation.kind === "initial" ? "正在发牌" : "正在依次摸牌";
+      el.onlineTurnDescription.textContent = "动画完成后才会开放下注操作。";
+      el.onlineWaitingTitle.textContent = "请稍候";
+      el.onlineWaitingDescription.textContent =
+        "所有玩家会看到同一套发牌顺序。";
       el.hostSkipButton.hidden = true;
       return;
     }
@@ -1050,7 +1661,7 @@
     const room = state.room;
     const game = room?.game;
     const isHost = room.self?.isHost;
-    el.hostControls.hidden = !isHost;
+    el.hostControls.hidden = !isHost || Boolean(room.game?.presentation);
     el.hostPauseButton.hidden =
       !game || game.phase !== "complete" || Boolean(room.paused);
     el.hostResumeButton.hidden =
@@ -1078,11 +1689,191 @@
     el.hostTransferButton.disabled = !transferable.length;
   }
 
+  function renderChatUnread() {
+    el.chatUnreadBadge.hidden = state.unreadChat <= 0;
+    el.chatUnreadBadge.textContent = String(Math.min(99, state.unreadChat));
+  }
+
+  function setSocialTab(tab) {
+    state.activeSocialTab = tab;
+    const equityActive = tab === "equity";
+    el.equityTab.classList.toggle("is-active", equityActive);
+    el.chatTab.classList.toggle("is-active", !equityActive);
+    el.equityTab.setAttribute("aria-selected", String(equityActive));
+    el.chatTab.setAttribute("aria-selected", String(!equityActive));
+    el.equityPanel.hidden = !equityActive;
+    el.chatPanel.hidden = equityActive;
+    if (!equityActive) {
+      state.unreadChat = 0;
+      renderChatUnread();
+    }
+  }
+
+  function emoteLabel(item) {
+    return item === "egg" ? "🥚 鸡蛋" : item === "tomato" ? "🍅 番茄" : "🌹 鲜花";
+  }
+
+  function renderChat() {
+    const chat = state.room?.chat;
+    if (!chat) {
+      return;
+    }
+    el.chatDisabledNotice.hidden = chat.enabled;
+    el.chatInput.disabled = !chat.enabled || chat.muted;
+    el.chatSendButton.disabled = !chat.enabled || chat.muted;
+    Array.from(el.quickPhraseBar.querySelectorAll("button")).forEach((button) => {
+      button.disabled = !chat.enabled || chat.muted;
+    });
+    Array.from(document.querySelectorAll(".emote-button")).forEach((button) => {
+      button.disabled = !chat.enabled || chat.muted;
+    });
+    el.chatStatusText.textContent = chat.muted
+      ? "你已被房主禁言"
+      : chat.enabled
+        ? "最近 50 条消息仅在本房间保留"
+        : "房主已关闭聊天";
+
+    if (!el.quickPhraseBar.childElementCount) {
+      el.quickPhraseBar.innerHTML = chat.quickPhrases
+        .map(
+          (phrase) =>
+            `<button type="button" data-phrase-id="${escapeHtml(
+              phrase.id
+            )}" title="${escapeHtml(phrase.text)}">${escapeHtml(
+              phrase.text
+            )}</button>`
+        )
+        .join("");
+    }
+
+    const targets = state.room.users.filter(
+      (user) => user.id !== state.room.self.id
+    );
+    el.emoteTarget.innerHTML = targets.length
+      ? targets
+          .map(
+            (user) =>
+              `<option value="${escapeHtml(user.id)}">${escapeHtml(
+                user.name
+              )}${user.connected ? "" : "（离线）"}</option>`
+          )
+          .join("")
+      : '<option value="">暂无目标</option>';
+    el.emoteTarget.disabled = !chat.enabled || chat.muted || !targets.length;
+
+    const currentUserMap = new Map(
+      state.room.users.map((user) => [user.id, user])
+    );
+    const messages = chat.messages || [];
+    el.chatMessages.innerHTML = messages.length
+      ? messages
+          .map((message) => {
+            const sender = currentUserMap.get(message.userId) || {
+              name: message.name,
+              avatarUrl: message.avatarUrl
+            };
+            const text =
+              message.kind === "emote"
+                ? `${sender.name} 向 ${
+                    currentUserMap.get(message.targetId)?.name || "玩家"
+                  } 扔了${emoteLabel(message.item)}`
+                : message.text;
+            return `
+              <article class="chat-message">
+                ${avatarMarkup(sender.avatarUrl || "preset:jester")}
+                <div class="chat-message-body">
+                  <div class="chat-message-head">
+                    <strong>${escapeHtml(sender.name)}</strong>
+                    <time>${new Date(message.createdAt).toLocaleTimeString(
+                      "zh-CN",
+                      { hour: "2-digit", minute: "2-digit" }
+                    )}</time>
+                  </div>
+                  <div class="chat-message-text ${
+                    message.kind === "quick"
+                      ? "is-quick"
+                      : message.kind === "emote"
+                        ? "is-emote"
+                        : ""
+                  }">${escapeHtml(text)}</div>
+                </div>
+              </article>
+            `;
+          })
+          .join("")
+      : '<p class="equity-note">还没有人说话，先打个招呼吧。</p>';
+    el.chatMessages.scrollTop = el.chatMessages.scrollHeight;
+
+    const isHost = state.room.self?.isHost;
+    el.hostChatControls.hidden = !isHost;
+    el.hostToggleChatButton.textContent = chat.enabled ? "关闭聊天" : "开启聊天";
+    const mgmtTargets = state.room.users.filter(
+      (user) => user.id !== state.room.self.id
+    );
+    el.chatModerationTarget.innerHTML = mgmtTargets.length
+      ? mgmtTargets
+          .map(
+            (user) =>
+              `<option value="${escapeHtml(user.id)}">${escapeHtml(
+                user.name
+              )}${user.chatMuted ? "（已禁言）" : ""}</option>`
+          )
+          .join("")
+      : '<option value="">暂无可管理玩家</option>';
+    [el.hostMuteButton, el.hostUnmuteButton].forEach((button) => {
+      button.disabled = !mgmtTargets.length;
+    });
+  }
+
+  function renderEquity(game) {
+    const selfIndex = findSelfGameIndex(game);
+    const self = selfIndex >= 0 ? game.players[selfIndex] : null;
+    if (!self || !game.equity) {
+      el.equityHandLabel.textContent = game.presentation ? "等待发牌" : "暂无估算";
+      el.equitySample.textContent = "基于公开信息估算";
+      el.equityBars.innerHTML =
+        '<p class="equity-note">完成本轮发牌后会显示所有活跃玩家的估算赢面。</p>';
+      return;
+    }
+    const cards = [self.holeCard, self.upCard, self.drawCard].filter(Boolean);
+    if (cards.length === 3) {
+      const hand = Engine.evaluateHand(cards);
+      el.equityHandLabel.textContent = hand.description;
+    } else {
+      el.equityHandLabel.textContent = `${cards.length} 张已知牌`;
+    }
+    el.equitySample.textContent = `${game.equity.sampleCount} 次抽样`;
+    el.equityBars.innerHTML = game.equity.players
+      .map((entry) => {
+        const player = game.players[entry.playerIndex];
+        return `
+          <div class="equity-row">
+            <span class="equity-name ${
+              player.id === self.id ? "is-self" : ""
+            }">${escapeHtml(player.id === self.id ? "你" : player.name)}</span>
+            <span class="equity-track"><span class="equity-fill" style="width:${entry.equity}%"></span></span>
+            <span class="equity-value">${entry.equity}%</span>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  function renderProfile(room) {
+    if (!room.self) {
+      return;
+    }
+    el.selfProfileAvatar.innerHTML = "";
+    renderProfileAvatar(el.selfProfileAvatar, room.self.avatarUrl);
+    el.selfProfileAvatar.title = room.self.name;
+  }
+
   function renderLobby() {
     const room = state.room;
     el.lobbyArea.hidden = false;
     el.onlineGameArea.hidden = true;
     el.headerRoomCode.textContent = room.code;
+    renderProfile(room);
     el.seatCapText.textContent = room.seatCap;
     el.seatedPlayerCount.textContent = room.seats.filter(Boolean).length;
     el.lobbyRoomStatus.textContent =
@@ -1108,9 +1899,7 @@
             user?.connected ? "" : "is-offline"
           }">
             ${user?.isHost ? '<span class="seat-role">房主</span>' : ""}
-            <div class="avatar" aria-hidden="true">${escapeHtml(
-              seatUser.name.slice(0, 1)
-            )}</div>
+            ${avatarMarkup(seatUser.avatarUrl || "preset:jester")}
             <div>
               <strong>${escapeHtml(seatUser.name)}${
                 user?.isSelf ? "（你）" : ""
@@ -1129,9 +1918,11 @@
       ? spectators
           .map(
             (user) =>
-              `<div class="spectator-item">${escapeHtml(user.name)}${
+              `<div class="spectator-item">${avatarMarkup(
+                user.avatarUrl
+              )}<b>${escapeHtml(user.name)}${
                 user.isSelf ? "（你）" : ""
-              }<span>${user.connected ? "旁观中" : "离线"}</span></div>`
+              }</b><span>${user.connected ? "旁观中" : "离线"}</span></div>`
           )
           .join("")
       : '<div class="spectator-item">暂无旁观者<span>—</span></div>';
@@ -1163,6 +1954,7 @@
     el.transferHostButton.hidden = !isHost;
     el.transferHostButton.disabled =
       !room.users.some((user) => user.id !== room.self.id && user.connected);
+    renderChat();
   }
 
   function renderGame() {
@@ -1171,13 +1963,17 @@
     el.lobbyArea.hidden = true;
     el.onlineGameArea.hidden = false;
     el.headerRoomCode.textContent = room.code;
+    renderProfile(room);
     renderGameSeats(game);
     renderGameCenter(game);
     renderActionControls();
     renderResult(game);
     renderHostControls();
+    renderEquity(game);
+    renderChat();
     const remaining = game.players.filter((player) => !player.eliminated).length;
     el.onlineRemainingText.textContent = `剩余 ${remaining} 人`;
+    animatePresentationCard(game);
   }
 
   function render() {
@@ -1215,6 +2011,9 @@
       return;
     }
     el.renameInput.value = state.room.self.name;
+    state.draftAvatars.rename =
+      state.room.self.avatarUrl || "preset:jester";
+    renderAvatarPickers();
     el.renameError.hidden = true;
     if (typeof el.renameDialog.showModal === "function") {
       el.renameDialog.showModal();
@@ -1223,15 +2022,40 @@
     }
   }
 
-  function submitRename(event) {
+  async function uploadProfileAvatar(avatar) {
+    const response = await fetch("/api/profile/avatar", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${state.token}`
+      },
+      body: JSON.stringify({ avatar })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "头像更新失败。");
+    }
+    return payload.avatarUrl;
+  }
+
+  async function submitRename(event) {
     event.preventDefault();
     const name = el.renameInput.value.trim();
     if (!name) {
       return;
     }
-    if (sendMessage({ type: "rename", name })) {
-      rememberName(name);
-      el.renameDialog.close();
+    el.renameError.hidden = true;
+    try {
+      const avatar = state.draftAvatars.rename;
+      await uploadProfileAvatar(avatar);
+      if (sendMessage({ type: "rename", name })) {
+        rememberName(name);
+        rememberAvatar(avatar);
+        el.renameDialog.close();
+      }
+    } catch (error) {
+      el.renameError.textContent = error.message;
+      el.renameError.hidden = false;
     }
   }
 
@@ -1255,9 +2079,78 @@
     return select.value || null;
   }
 
+  function applyOnlinePreferences() {
+    el.onlineSoundToggle.setAttribute(
+      "aria-pressed",
+      String(state.preferences.sound)
+    );
+    el.onlineSoundToggle.textContent = state.preferences.sound ? "♪" : "×";
+    el.onlineSoundToggle.title = state.preferences.sound
+      ? "关闭声音和语音"
+      : "开启声音和语音";
+    el.onlineMotionToggle.setAttribute(
+      "aria-pressed",
+      String(state.preferences.motion)
+    );
+    el.onlineMotionToggle.textContent = state.preferences.motion ? "◌" : "—";
+    el.onlineMotionToggle.title = state.preferences.motion
+      ? "关闭动画"
+      : "开启动画";
+    el.chatLocalMuteButton.textContent = state.preferences.localChatMuted
+      ? "取消本地静音"
+      : "本地静音";
+    document.body.classList.toggle(
+      "no-motion",
+      !state.preferences.motion
+    );
+  }
+
+  function toggleSoundPreference() {
+    state.preferences.sound = !state.preferences.sound;
+    savePreferences();
+    applyOnlinePreferences();
+    showToast(state.preferences.sound ? "声音已开启" : "声音已关闭");
+  }
+
+  function toggleMotionPreference() {
+    state.preferences.motion = !state.preferences.motion;
+    savePreferences();
+    applyOnlinePreferences();
+    showToast(state.preferences.motion ? "动画已开启" : "动画已关闭");
+  }
+
+  function toggleLocalChatMute() {
+    state.preferences.localChatMuted = !state.preferences.localChatMuted;
+    savePreferences();
+    applyOnlinePreferences();
+  }
+
   function bindEvents() {
     el.createRoomForm?.addEventListener("submit", createRoom);
     el.joinRoomForm?.addEventListener("submit", joinRoom);
+    [
+      ["create", el.createAvatarFile],
+      ["join", el.joinAvatarFile],
+      ["rename", el.renameAvatarFile]
+    ].forEach(([mode, input]) => {
+      input?.addEventListener("change", () => {
+        applyAvatarFile(mode, input.files?.[0]);
+        input.value = "";
+      });
+    });
+    [el.createPresetAvatars, el.joinPresetAvatars, el.renamePresetAvatars].forEach(
+      (container) => {
+        container?.addEventListener("click", (event) => {
+          const button = event.target.closest("[data-preset]");
+          if (!button) {
+            return;
+          }
+          const mode = button.dataset.avatarMode;
+          state.draftAvatars[mode] = `preset:${button.dataset.preset}`;
+          renderAvatarPickers();
+        });
+      }
+    );
     el.copyLinkButton.addEventListener("click", copyInviteLink);
     el.copyLinkLargeButton.addEventListener("click", copyInviteLink);
     el.renameButton.addEventListener("click", openRenameDialog);
@@ -1266,6 +2159,70 @@
     el.rulesButton.addEventListener("click", () => el.rulesDialog.showModal());
     el.closeRulesButton.addEventListener("click", () => el.rulesDialog.close());
     el.leaveRoomButton.addEventListener("click", leaveRoom);
+    el.onlineSoundToggle.addEventListener("click", toggleSoundPreference);
+    el.onlineMotionToggle.addEventListener("click", toggleMotionPreference);
+    el.equityTab.addEventListener("click", () => setSocialTab("equity"));
+    el.chatTab.addEventListener("click", () => setSocialTab("chat"));
+    el.chatLocalMuteButton.addEventListener("click", toggleLocalChatMute);
+    el.chatForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = el.chatInput.value.trim();
+      if (!text) {
+        return;
+      }
+      if (sendMessage({ type: "chat:send", kind: "text", text })) {
+        el.chatInput.value = "";
+      }
+    });
+    el.quickPhraseBar.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-phrase-id]");
+      if (button) {
+        sendMessage({
+          type: "chat:send",
+          kind: "quick",
+          phraseId: button.dataset.phraseId
+        });
+      }
+    });
+    document.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-emote]");
+      if (!button || !state.room) {
+        return;
+      }
+      const targetId = el.emoteTarget.value;
+      if (!targetId) {
+        showToast("请先选择一个玩家。");
+        return;
+      }
+      sendMessage({
+        type: "emote:throw",
+        targetId,
+        item: button.dataset.emote
+      });
+    });
+    el.hostMuteButton.addEventListener("click", () => {
+      const targetId = el.chatModerationTarget.value;
+      if (targetId) {
+        sendMessage({ type: "host:chat:mute", targetId, muted: true });
+      }
+    });
+    el.hostUnmuteButton.addEventListener("click", () => {
+      const targetId = el.chatModerationTarget.value;
+      if (targetId) {
+        sendMessage({ type: "host:chat:mute", targetId, muted: false });
+      }
+    });
+    el.hostClearChatButton.addEventListener("click", () => {
+      if (window.confirm("确认清空房间内的全部聊天记录？")) {
+        sendMessage({ type: "host:chat:clear" });
+      }
+    });
+    el.hostToggleChatButton.addEventListener("click", () => {
+      sendMessage({
+        type: "host:chat:enable",
+        enabled: !state.room.chat.enabled
+      });
+    });
     el.lobbyStartButton.addEventListener("click", () =>
       sendHostCommand("host:start")
     );
@@ -1354,6 +2311,14 @@
   function init() {
     cacheElements();
     bindEvents();
+    loadPreferences();
+    const savedAvatar = loadPreferredAvatar();
+    state.draftAvatars.create = savedAvatar;
+    state.draftAvatars.join = savedAvatar;
+    state.draftAvatars.rename = savedAvatar;
+    applyOnlinePreferences();
+    renderAvatarPickers();
+    setSocialTab("equity");
     state.countdownTimer = setInterval(updateCountdown, 250);
     const code = routeCode();
     if (code) {
