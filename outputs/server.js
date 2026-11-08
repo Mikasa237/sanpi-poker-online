@@ -449,6 +449,7 @@ function startInitialPresentation(room, broadcast) {
     last: null
   };
   room.status = "dealing";
+  broadcast(room, presentationEvent(room));
   const stepMs = room.dealTimings?.stepMs || 220;
   const roundGapMs = room.dealTimings?.roundGapMs || 350;
   const openingPauseMs = room.dealTimings?.openingPauseMs || 450;
@@ -1264,21 +1265,17 @@ function createGameServer(options = {}) {
     if (message.handNo !== room.game.handNo) {
       throw new RequestError(409, "这手牌已经结束，请等待最新状态。");
     }
-    if (room.game.actorIndex !== participant.seat) {
-      throw new RequestError(409, "还没有轮到你。");
-    }
     const requestId = String(message.requestId || "");
+    const requestKey = `${message.handNo}:${requestId}`;
     if (requestId) {
       room.processedRequests ||= new Map();
       const seen = room.processedRequests.get(participant.id) || [];
-      if (seen.includes(requestId)) {
+      if (seen.includes(requestKey)) {
         return;
       }
-      seen.push(requestId);
-      if (seen.length > 40) {
-        seen.splice(0, seen.length - 40);
-      }
-      room.processedRequests.set(participant.id, seen);
+    }
+    if (room.game.actorIndex !== participant.seat) {
+      throw new RequestError(409, "还没有轮到你。");
     }
     const action = message.action || {};
     const phaseBefore = room.game.phase;
@@ -1286,6 +1283,14 @@ function createGameServer(options = {}) {
       type: action.type,
       amount: action.amount
     });
+    if (requestId) {
+      const seen = room.processedRequests.get(participant.id) || [];
+      seen.push(requestKey);
+      if (seen.length > 40) {
+        seen.splice(0, seen.length - 40);
+      }
+      room.processedRequests.set(participant.id, seen);
+    }
     const drawStarted =
       phaseBefore === "bet1" &&
       room.game.phase !== "bet1" &&
