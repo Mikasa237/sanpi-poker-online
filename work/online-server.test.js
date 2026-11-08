@@ -788,3 +788,57 @@ test("dealing presentation masks cards and blocks betting until finished", async
   hostClient.close();
   guestClient.close();
 });
+
+test("host can configure ante and bet cap before starting", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "房主", 3);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "访客");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  hostClient.send({
+    type: "host:settings",
+    ante: 25,
+    betCap: 250
+  });
+  const configured = await guestClient.waitFor(
+    (message) =>
+      message.room?.ante === 25 && message.room?.betCap === 250
+  );
+  assert.equal(configured.room.game, null);
+
+  hostClient.send({
+    type: "host:start",
+    ante: 20,
+    betCap: 120
+  });
+  const started = await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
+  );
+  assert.equal(started.room.game.config.ante, 20);
+  assert.equal(started.room.game.config.betCap, 120);
+  assert.equal(started.room.game.players[0].stack, 980);
+
+  hostClient.send({
+    type: "host:settings",
+    ante: 3,
+    betCap: 500
+  });
+  const invalid = await hostClient.waitFor(
+    (message) => message.type === "error"
+  );
+  assert.match(invalid.message, /底注/);
+  hostClient.close();
+  guestClient.close();
+});

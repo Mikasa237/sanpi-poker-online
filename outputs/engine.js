@@ -47,7 +47,8 @@
     difficulty: "standard",
     startingChips: 1000,
     ante: 10,
-    minBet: 10
+    minBet: 10,
+    betCap: 0
   });
 
   function clone(value) {
@@ -302,7 +303,8 @@
         difficulty: opts.difficulty,
         startingChips,
         ante: Math.max(1, Number(opts.ante) || DEFAULTS.ante),
-        minBet: Math.max(1, Number(opts.minBet) || DEFAULTS.minBet)
+        minBet: Math.max(1, Number(opts.minBet) || DEFAULTS.minBet),
+        betCap: Math.max(0, Number(opts.betCap) || 0)
       },
       phase: "ready",
       handNo: 0,
@@ -580,7 +582,11 @@
       return { fold: null, call: null, raise: null, allIn: null };
     }
     const need = Math.max(0, state.currentBet - player.roundContribution);
-    const maxTo = player.roundContribution + player.stack;
+    const tableMax = player.roundContribution + player.stack;
+    const maxTo =
+      state.config.betCap > 0
+        ? Math.min(tableMax, state.config.betCap)
+        : tableMax;
     const actions = {
       fold: { type: "fold", label: "弃牌" },
       call: null,
@@ -619,7 +625,11 @@
       };
     }
 
-    if (player.stack > 0 && maxTo > state.currentBet) {
+    if (
+      player.stack > 0 &&
+      maxTo > state.currentBet &&
+      maxTo === tableMax
+    ) {
       actions.allIn = {
         type: "all_in",
         amount: player.stack,

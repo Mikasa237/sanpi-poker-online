@@ -150,6 +150,10 @@
     "spectatorCount",
     "spectatorList",
     "hostHint",
+    "lobbyStakeSettings",
+    "lobbyAnteInput",
+    "lobbyBetCapInput",
+    "saveStakeSettingsButton",
     "lobbyStartButton",
     "lobbyHostTargetSelect",
     "lobbyRemoveButton",
@@ -203,7 +207,12 @@
     "hostTargetSelect",
     "hostRemoveButton",
     "hostTransferButton",
+    "nextMatchSettings",
+    "nextAnteInput",
+    "nextBetCapInput",
+    "applyNextSettingsButton",
     "onlineRemainingText",
+    "onlineStakesText",
     "equityTab",
     "chatTab",
     "chatUnreadBadge",
@@ -1669,6 +1678,13 @@
     el.hostStartNowButton.hidden =
       !game || game.phase !== "complete" || Boolean(game.tableOver);
     el.hostRestartButton.hidden = !game?.tableOver;
+    el.nextMatchSettings.hidden = !isHost || !game?.tableOver;
+    if (document.activeElement !== el.nextAnteInput) {
+      el.nextAnteInput.value = String(room.ante ?? 10);
+    }
+    if (document.activeElement !== el.nextBetCapInput) {
+      el.nextBetCapInput.value = String(room.betCap ?? 0);
+    }
     const gameTargets = room.users.filter(
       (user) => user.id !== room.self.id && user.seat !== null
     );
@@ -1878,10 +1894,13 @@
     el.seatedPlayerCount.textContent = room.seats.filter(Boolean).length;
     el.lobbyRoomStatus.textContent =
       room.status === "matchOver" ? "上一局结束" : "等待开局";
+    const stakeText = `底注 ${formatNumber(room.ante)} · 单注封顶 ${
+      room.betCap > 0 ? formatNumber(room.betCap) : "无上限"
+    }`;
     el.lobbyLead.textContent =
       room.seats.filter(Boolean).length < 2
-        ? "至少还需要一名玩家入座。"
-        : "玩家已入座，房主可以开始第一手。";
+        ? `至少还需要一名玩家入座。当前 ${stakeText}。`
+        : `玩家已入座，当前 ${stakeText}，房主可以开始第一手。`;
     const shareUrl = `${location.origin}/room/${room.code}`;
     el.shareUrlText.textContent = shareUrl;
     el.lobbySeats.innerHTML = room.seats
@@ -1930,6 +1949,13 @@
     const isHost = room.self?.isHost;
     el.lobbyStartButton.hidden = !isHost;
     el.lobbyStartButton.disabled = room.seats.filter(Boolean).length < 2;
+    el.lobbyStakeSettings.hidden = !isHost;
+    if (document.activeElement !== el.lobbyAnteInput) {
+      el.lobbyAnteInput.value = String(room.ante ?? 10);
+    }
+    if (document.activeElement !== el.lobbyBetCapInput) {
+      el.lobbyBetCapInput.value = String(room.betCap ?? 0);
+    }
     el.hostHint.textContent = isHost
       ? room.seats.filter(Boolean).length < 2
         ? "至少需要两名在座玩家才能开局。"
@@ -1973,6 +1999,11 @@
     renderChat();
     const remaining = game.players.filter((player) => !player.eliminated).length;
     el.onlineRemainingText.textContent = `剩余 ${remaining} 人`;
+    el.onlineStakesText.textContent = `底注 ${formatNumber(
+      state.room.ante
+    )} · 单注封顶 ${
+      state.room.betCap > 0 ? formatNumber(state.room.betCap) : "无上限"
+    }`;
     animatePresentationCard(game);
   }
 
@@ -2073,6 +2104,13 @@
 
   function sendHostCommand(type, extra) {
     sendMessage(Object.assign({ type }, extra || {}));
+  }
+
+  function stakeSettingsFrom(inputAnte, inputCap) {
+    return {
+      ante: Number(inputAnte.value),
+      betCap: Number(inputCap.value)
+    };
   }
 
   function selectedHostTarget(select) {
@@ -2224,7 +2262,16 @@
       });
     });
     el.lobbyStartButton.addEventListener("click", () =>
-      sendHostCommand("host:start")
+      sendHostCommand(
+        "host:start",
+        stakeSettingsFrom(el.lobbyAnteInput, el.lobbyBetCapInput)
+      )
+    );
+    el.saveStakeSettingsButton.addEventListener("click", () =>
+      sendHostCommand(
+        "host:settings",
+        stakeSettingsFrom(el.lobbyAnteInput, el.lobbyBetCapInput)
+      )
     );
     el.hostPauseButton.addEventListener("click", () =>
       sendHostCommand("host:pause")
@@ -2236,7 +2283,16 @@
       sendHostCommand("host:start")
     );
     el.hostRestartButton.addEventListener("click", () =>
-      sendHostCommand("host:start")
+      sendHostCommand(
+        "host:start",
+        stakeSettingsFrom(el.nextAnteInput, el.nextBetCapInput)
+      )
+    );
+    el.applyNextSettingsButton.addEventListener("click", () =>
+      sendHostCommand(
+        "host:settings",
+        stakeSettingsFrom(el.nextAnteInput, el.nextBetCapInput)
+      )
     );
     el.hostSkipButton.addEventListener("click", () => {
       const actor =

@@ -499,3 +499,24 @@ test("public-information equity sums to 100 without peeking at opponent holes", 
     equity.players.map((entry) => [entry.playerId, entry.equity])
   );
 });
+
+test("configured bet cap limits raises without forcing an invalid all-in", () => {
+  const state = Engine.createGame({
+    seed: 1201,
+    playerCount: 4,
+    ante: 20,
+    betCap: 60
+  });
+  Engine.startNextHand(state);
+  const opener = state.actorIndex;
+  const legal = Engine.getLegalActions(state, opener);
+  assert.ok(legal.raise);
+  assert.equal(legal.raise.max, 60);
+  assert.equal(legal.allIn, null);
+  Engine.performAction(state, { type: "raise", amount: 60 });
+  const responder = state.actorIndex;
+  const response = Engine.getLegalActions(state, responder);
+  assert.equal(response.call.amount, 60);
+  assert.equal(response.raise, null);
+  assert.equal(response.allIn, null);
+});

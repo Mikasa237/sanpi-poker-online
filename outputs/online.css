@@ -600,6 +600,27 @@
   width: 100%;
 }
 
+.stake-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  padding-top: 4px;
+}
+
+.stake-settings .compact-field {
+  margin: 0;
+}
+
+.stake-settings input {
+  min-height: 36px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stake-settings .secondary-button {
+  grid-column: 1 / -1;
+  min-height: 34px;
+}
+
 .online-game-layout {
   --seat-width: 130px;
   display: grid;
