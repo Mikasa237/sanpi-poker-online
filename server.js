@@ -206,6 +206,27 @@ function seatCapFromValue(value) {
   return number;
 }
 
+function normalizeStakeSettings(anteValue, capValue, startingChips = 1000) {
+  const ante = Number(anteValue);
+  const betCap = Number(capValue);
+  if (!Number.isInteger(ante) || ante < 5 || ante > 100 || ante % 5 !== 0) {
+    throw new RequestError(400, "底注需要设置为 5–100，且为 5 的倍数。");
+  }
+  if (
+    !Number.isInteger(betCap) ||
+    betCap < 0 ||
+    betCap > startingChips ||
+    betCap % 10 !== 0 ||
+    (betCap > 0 && betCap < ante)
+  ) {
+    throw new RequestError(
+      400,
+      `单注上限需要为 0–${startingChips}，且为 10 的倍数；0 表示无上限。`
+    );
+  }
+  return { ante, betCap };
+}
+
 function ensureUniqueName(room, name, exceptUserId) {
   const lowered = name.toLocaleLowerCase("zh-CN");
   for (const participant of room.users.values()) {
@@ -649,8 +670,9 @@ function startNewMatch(room, broadcast) {
     playerCount: room.seatCap,
     onlinePlayers,
     startingChips: 1000,
-    ante: 10,
-    minBet: 10
+    ante: room.ante,
+    minBet: room.ante,
+    betCap: room.betCap
   });
   Engine.startNextHand(room.game);
   room.paused = false;
@@ -799,6 +821,8 @@ function makeRoomView(room, participant) {
     room: {
       code: room.code,
       seatCap: room.seatCap,
+      ante: room.ante,
+      betCap: room.betCap,
       status: room.status,
       hostId: room.hostId,
       paused: room.paused,
@@ -1167,11 +1191,33 @@ function createGameServer(options = {}) {
         room.status === "matchOver" ||
         !room.game
       ) {
+        if (Number.isFinite(Number(message.ante)) || Number.isFinite(Number(message.betCap))) {
+          const stakes = normalizeStakeSettings(
+            message.ante ?? room.ante,
+            message.betCap ?? room.betCap,
+            1000
+          );
+          room.ante = stakes.ante;
+          room.betCap = stakes.betCap;
+        }
         startNewMatch(room, broadcast);
       } else if (room.game.phase === "complete") {
         beginNextHand(room, broadcast);
       }
       return;
+    }
+    if (message.type === "host:settings") {
+      if (!room.game || room.status === "lobby" || room.status === "matchOver") {
+        const stakes = normalizeStakeSettings(
+          message.ante,
+          message.betCap,
+          1000
+        );
+        room.ante = stakes.ante;
+        room.betCap = stakes.betCap;
+        return;
+      }
+      throw new RequestError(409, "牌局进行中不能修改底注和上限。");
     }
     if (message.type === "host:pause") {
       room.paused = true;
@@ -1362,6 +1408,8 @@ function createGameServer(options = {}) {
         handleAction(room, participant, message);
       } else if (message.type === "host:start") {
         handleHostCommand(room, participant, message);
+      } else if (message.type === "host:settings") {
+        handleHostCommand(room, participant, message);
       } else if (message.type === "host:pause") {
         handleHostCommand(room, participant, message);
       } else if (message.type === "host:resume") {
@@ -1498,6 +1546,8 @@ function createGameServer(options = {}) {
         const room = {
           code,
           seatCap,
+          ante: 10,
+          betCap: 0,
           hostId: null,
           status: "lobby",
           paused: false,
@@ -1746,6 +1796,7 @@ module.exports = {
   createGameServer,
   normalizeName,
   seatCapFromValue,
+  normalizeStakeSettings,
   ROOM_CODE_ALPHABET,
   MAX_ROOM_PEOPLE
 };
