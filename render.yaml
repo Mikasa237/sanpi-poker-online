@@ -3,6 +3,7 @@ services:
     name: sanpi-poker
     runtime: node
     rootDir: outputs
+    plan: free
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health
