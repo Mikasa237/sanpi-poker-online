@@ -149,9 +149,16 @@ test("triple tiers override target rank and lower target rank wins inside a tier
     card("K", "C", "B")
   ]);
   assert.ok(Engine.compareEvaluations(naturalKing, naturalAce) > 0);
+
+  const naturalAceOtherSuits = Engine.evaluateHand([
+    card("A", "S", "B"),
+    card("A", "H", "B"),
+    card("A", "D", "B")
+  ]);
+  assert.equal(Engine.compareEvaluations(naturalAce, naturalAceOtherSuits), 0);
 });
 
-test("normal hands use rank sum, wildcard as 18, then rank and suit tiebreaks", () => {
+test("normal hands use only rank sum and wildcard counts as 18", () => {
   const wildHand = Engine.evaluateHand([
     card("5", "D", "A"),
     card("6", "D", "A"),
@@ -166,7 +173,7 @@ test("normal hands use rank sum, wildcard as 18, then rank and suit tiebreaks", 
     card("8", "S", "A")
   ]);
   assert.equal(aceJokerHand.score, 29);
-  assert.ok(Engine.compareEvaluations(wildHand, aceJokerHand) > 0);
+  assert.equal(Engine.compareEvaluations(wildHand, aceJokerHand), 0);
 
   const spadeAce = Engine.evaluateHand([
     card("A", "S", "A"),
@@ -178,7 +185,7 @@ test("normal hands use rank sum, wildcard as 18, then rank and suit tiebreaks", 
     card("7", "D", "A"),
     card("8", "D", "A")
   ]);
-  assert.ok(Engine.compareEvaluations(spadeAce, heartAce) > 0);
+  assert.equal(Engine.compareEvaluations(spadeAce, heartAce), 0);
 });
 
 test("identical two-deck cards produce a complete tie", () => {
@@ -269,7 +276,7 @@ test("side pots use eligibility layers and return uncalled excess", () => {
   );
 });
 
-test("equal winners split a pot and odd chips go clockwise from the dealer", () => {
+test("equal winners leave the whole pot for the next hand", () => {
   const state = Engine.createGame({ seed: 505, playerCount: 4 });
   state.dealerIndex = 0;
   state.players.forEach((player) => {
@@ -285,11 +292,9 @@ test("equal winners split a pot and odd chips go clockwise from the dealer", () 
     { 0: tied, 2: tied },
     null
   );
-  assert.deepEqual(
-    result.awards.map((award) => award.amount),
-    [55, 55]
-  );
-  assert.equal(state.players[0].stack + state.players[2].stack, 110);
+  assert.deepEqual(result.awards, []);
+  assert.equal(result.carriedAmount, 110);
+  assert.equal(state.players[0].stack + state.players[2].stack, 0);
 });
 
 test("1000 automated hands always terminate with legal cards and chips", () => {
@@ -301,10 +306,9 @@ test("1000 automated hands always terminate with legal cards and chips", () => {
   });
   for (let hand = 0; hand < 1000; hand += 1) {
     Engine.startNextHand(state);
-    const startingTotal = state.startingStacks.reduce(
-      (sum, value) => sum + value,
-      0
-    );
+    const startingTotal =
+      state.startingStacks.reduce((sum, value) => sum + value, 0) +
+      (state.carryPot || 0);
     let actions = 0;
     while (["bet1", "bet2"].includes(state.phase)) {
       assert.ok(state.actorIndex !== null);
@@ -312,10 +316,9 @@ test("1000 automated hands always terminate with legal cards and chips", () => {
       actions += 1;
       assert.ok(actions < 200, `hand ${hand + 1} did not terminate`);
     }
-    const endingTotal = state.players.reduce(
-      (sum, player) => sum + player.stack,
-      0
-    );
+    const endingTotal =
+      state.players.reduce((sum, player) => sum + player.stack, 0) +
+      (state.carryPot || 0);
     assert.equal(endingTotal, startingTotal, `chip leak in hand ${hand + 1}`);
     assert.ok(state.players.every((player) => player.stack >= 0));
     if (state.summary.showdown) {
@@ -497,6 +500,146 @@ test("all-wild opening falls back to the player after the dealer", () => {
   state.players[1].upCard = card("L", null, "B");
   assert.equal(Engine.findOpeningPlayer(state, [1, 0]), 1);
   assert.equal(state.openingFallback, true);
+});
+
+test("the third card determines the second betting opener and skips wildcards", () => {
+  const state = Engine.createGame({
+    seed: 1104,
+    mode: "online",
+    playerCount: 4,
+    onlinePlayers: [
+      { id: "a", name: "甲" },
+      { id: "b", name: "乙" },
+      { id: "c", name: "丙" },
+      { id: "d", name: "丁" }
+    ]
+  });
+  state.dealerIndex = 0;
+  state.players[0].drawCard = card("L", null, "A");
+  state.players[1].drawCard = card("A", "H", "A");
+  state.players[2].drawCard = card("A", "S", "B");
+  state.players[3].drawCard = card("K", "S", "A");
+  assert.equal(Engine.findSecondOpeningPlayer(state, [0, 1, 2, 3]), 2);
+  assert.equal(state.secondOpeningFallback, false);
+
+  state.players.forEach((player, index) => {
+    player.drawCard = card("L", null, index % 2 ? "B" : "A");
+  });
+  assert.equal(Engine.findSecondOpeningPlayer(state, [0, 1, 2, 3]), 1);
+  assert.equal(state.secondOpeningFallback, true);
+});
+
+test("a first-round raise triggers a real reshuffle before the third card", () => {
+  const raised = Engine.createGame({
+    seed: 1105,
+    playerCount: 4,
+    startingChips: 100000
+  });
+  Engine.startNextHand(raised);
+  const opener = raised.actorIndex;
+  let legal = Engine.getLegalActions(raised, opener);
+  Engine.performAction(raised, { type: "raise", amount: legal.raise.min });
+  legal = Engine.getLegalActions(raised, raised.actorIndex);
+  Engine.performAction(raised, {
+    type: "raise",
+    amount: legal.raise.min
+  });
+  while (raised.phase === "bet1") {
+    Engine.performAction(raised, { type: "call" });
+  }
+  assert.equal(raised.firstRoundRaised, true);
+  assert.equal(raised.midHandReshuffle, true);
+  assert.ok(Number.isInteger(raised.secondOpenerIndex));
+
+  const called = Engine.createGame({
+    seed: 1106,
+    playerCount: 4,
+    startingChips: 100000
+  });
+  Engine.startNextHand(called);
+  legal = Engine.getLegalActions(called, called.actorIndex);
+  Engine.performAction(called, { type: "raise", amount: legal.raise.min });
+  while (called.phase === "bet1") {
+    Engine.performAction(called, { type: "call" });
+  }
+  assert.equal(called.firstRoundRaised, false);
+  assert.equal(called.midHandReshuffle, false);
+});
+
+test("a unique winner collects the carried pot and resets it", () => {
+  const state = Engine.createGame({
+    seed: 1107,
+    mode: "online",
+    playerCount: 2,
+    onlinePlayers: [
+      { id: "a", name: "甲" },
+      { id: "b", name: "乙" }
+    ]
+  });
+  Engine.startNextHand(state);
+  state.carryPot = 75;
+  state.phase = "bet2";
+  state.actorIndex = 0;
+  state.currentBet = 10;
+  state.minRaise = 10;
+  state.actedThisRound = [];
+  state.players.forEach((player) => {
+    player.stack = 1000;
+    player.handContribution = 100;
+    player.roundContribution = 0;
+    player.folded = false;
+    player.allIn = false;
+  });
+  state.players[0].holeCard = card("A", "S", "A");
+  state.players[0].upCard = card("A", "H", "A");
+  state.players[0].drawCard = card("A", "C", "B");
+  state.players[1].holeCard = card("K", "S", "A");
+  state.players[1].upCard = card("Q", "S", "A");
+  state.players[1].drawCard = card("J", "S", "A");
+  Engine.performAction(state, { type: "call" });
+  Engine.performAction(state, { type: "call" });
+  assert.equal(state.summary.outrightWinner, 0);
+  assert.equal(state.carryPot, 0);
+  assert.equal(state.summary.carryPotIn, 75);
+  assert.equal(state.summary.awards[0].amount, 295);
+});
+
+test("a tied showdown carries the previous pot and the current pot forward", () => {
+  const state = Engine.createGame({
+    seed: 1108,
+    mode: "online",
+    playerCount: 2,
+    onlinePlayers: [
+      { id: "a", name: "甲" },
+      { id: "b", name: "乙" }
+    ]
+  });
+  Engine.startNextHand(state);
+  state.carryPot = 75;
+  state.phase = "bet2";
+  state.actorIndex = 0;
+  state.currentBet = 10;
+  state.minRaise = 10;
+  state.actedThisRound = [];
+  state.players.forEach((player) => {
+    player.stack = 1000;
+    player.handContribution = 100;
+    player.roundContribution = 0;
+    player.folded = false;
+    player.allIn = false;
+  });
+  state.players[0].holeCard = card("A", "S", "A");
+  state.players[0].upCard = card("K", "H", "A");
+  state.players[0].drawCard = card("Q", "D", "A");
+  state.players[1].holeCard = card("A", "H", "B");
+  state.players[1].upCard = card("K", "C", "B");
+  state.players[1].drawCard = card("Q", "S", "B");
+  Engine.performAction(state, { type: "call" });
+  Engine.performAction(state, { type: "call" });
+  assert.equal(state.summary.outrightWinner, null);
+  assert.deepEqual(state.summary.awards, []);
+  assert.equal(state.carryPot, 295);
+  assert.equal(state.summary.carryPotOut, 295);
 });
 
 test("public-information equity sums to 100 without peeking at opponent holes", () => {

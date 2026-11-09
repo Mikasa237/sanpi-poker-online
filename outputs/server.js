@@ -21,6 +21,19 @@ const MAX_STORED_AVATAR_BYTES = 192 * 1024;
 const TOKEN_SECRET =
   process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 const HOST_ISSUE_SECRET = process.env.HOST_ISSUE_SECRET || "";
+const VOICE_ICE_SERVERS = (() => {
+  if (process.env.VOICE_ICE_SERVERS) {
+    try {
+      const parsed = JSON.parse(process.env.VOICE_ICE_SERVERS);
+      if (Array.isArray(parsed) && parsed.length) {
+        return parsed;
+      }
+    } catch {
+      // Fall back to the public STUN server below.
+    }
+  }
+  return [{ urls: "stun:stun.cloudflare.com:3478" }];
+})();
 const PUBLIC_FILES = new Set([
   "/index.html",
   "/online.html",
@@ -389,7 +402,11 @@ function createParticipant(room, name, joinedAt, avatarUrl) {
     chatMuted: false,
     lastChatAt: 0,
     chatTimes: [],
-    lastEmoteAt: 0
+    lastEmoteAt: 0,
+    rewindEligible: false,
+    rewindStage: 0,
+    revivalsUsed: 0,
+    voiceActive: false
   };
 }
 
@@ -439,7 +456,8 @@ function releasePendingSeats(room) {
       gamePlayer &&
       gamePlayer.id === participant.id &&
       gamePlayer.eliminated;
-    if (participant.pendingRemoval || eliminated) {
+    const preservedRewind = eliminated && participant.rewindEligible;
+    if ((participant.pendingRemoval || eliminated) && !preservedRewind) {
       if (participant.seat !== null) {
         room.seats[participant.seat] = null;
         participant.seat = null;
@@ -490,9 +508,13 @@ function roomSeatDescriptors(room) {
     if (!participant || participant.pendingRemoval || participant.leaving) {
       return null;
     }
+    if (participant.eliminated && participant.rewindEligible) {
+      return null;
+    }
     return {
       id: participant.id,
-      name: participant.name
+      name: participant.name,
+      stack: participant.stack
     };
   });
 }
@@ -539,8 +561,107 @@ function presentationEvent(room) {
   };
 }
 
+function clearRewindWindow(room) {
+  if (room.rewindTimer) {
+    clearTimeout(room.rewindTimer);
+    room.rewindTimer = null;
+  }
+  room.rewindWindow = null;
+}
+
+function finalizeRewindWindow(room, broadcast) {
+  if (!room.rewindWindow) {
+    return;
+  }
+  const window = room.rewindWindow;
+  window.requests.forEach((request, rewinderId) => {
+    if (request.status === "accepted") {
+      room.rewindViewers.set(rewinderId, request.targetId);
+    }
+  });
+  clearRewindWindow(room);
+  cancelPresentation(room);
+  if (room.game.phase === "bet2" && room.game.players.some((player) => player.drawCard)) {
+    startDrawPresentation(room, broadcast);
+    return;
+  }
+  if (room.game.phase === "complete") {
+    handleCompletedHand(room);
+    scheduleAutoNext(room, broadcast);
+    broadcast(room);
+    return;
+  }
+  room.status = "playing";
+  broadcast(room);
+}
+
+function startRewindWindow(room, broadcast) {
+  const rewinders = Array.from(room.users.values()).filter(
+    (participant) => participant.rewindEligible && participant.connected
+  );
+  if (!rewinders.length) {
+    cancelPresentation(room);
+    if (
+      room.game.phase === "bet2" &&
+      room.game.players.some((player) => player.drawCard)
+    ) {
+      startDrawPresentation(room, broadcast);
+      return;
+    }
+    if (room.game.phase === "complete") {
+      handleCompletedHand(room);
+      scheduleAutoNext(room, broadcast);
+      broadcast(room);
+      return;
+    }
+    room.status = "playing";
+    broadcast(room);
+    return;
+  }
+  clearRewindWindow(room);
+  room.rewindWindow = {
+    handNo: room.game.handNo,
+    deadline: Date.now() + 10_000,
+    requests: new Map()
+  };
+  room.status = "rewind";
+  room.lastActiveAt = Date.now();
+  broadcast(room);
+  room.rewindTimer = setTimeout(() => {
+    if (room.rewindWindow) {
+      finalizeRewindWindow(room, broadcast);
+    }
+  }, 10_000);
+  room.rewindTimer.unref?.();
+}
+
+function maybeFinalizeRewindWindow(room, broadcast) {
+  if (!room.rewindWindow) {
+    return false;
+  }
+  const pending = Array.from(room.rewindWindow.requests.values()).some(
+    (request) => request.status === "pending"
+  );
+  if (pending) {
+    return false;
+  }
+  const rewinders = Array.from(room.users.values()).filter(
+    (participant) => participant.rewindEligible && participant.connected
+  );
+  const resolved = rewinders.every((participant) =>
+    room.rewindWindow.requests.has(participant.id)
+  );
+  if (resolved) {
+    finalizeRewindWindow(room, broadcast);
+    return true;
+  }
+  return false;
+}
+
 function startInitialPresentation(room, broadcast) {
   cancelPresentation(room);
+  clearRewindWindow(room);
+  room.rewindViewers.clear();
   const order = room.game.dealOrder.filter(
     (index) => !room.game.players[index].eliminated
   );
@@ -602,13 +723,7 @@ function startInitialPresentation(room, broadcast) {
       if (!room.presentation) {
         return;
       }
-      cancelPresentation(room);
-      room.status = "playing";
-      if (room.game.phase === "complete") {
-        handleCompletedHand(room);
-        scheduleAutoNext(room, broadcast);
-      }
-      broadcast(room);
+        startRewindWindow(room, broadcast);
     }, openingPauseMs);
   };
 
@@ -633,7 +748,7 @@ function startDrawPresentation(room, broadcast) {
       : baseOrder;
   room.presentation = {
     kind: "draw",
-    stage: "discard",
+    stage: room.game.midHandReshuffle ? "reshuffle" : "discard",
     sequence: 0,
     index: -1,
     order,
@@ -677,6 +792,8 @@ function startDrawPresentation(room, broadcast) {
       room.presentationTimer = setTimeout(revealDraw, drawStepMs);
       return;
     }
+    presentation.stage = "opening2";
+    broadcast(room, presentationEvent(room));
     room.presentationTimer = setTimeout(() => {
       if (!room.presentation) {
         return;
@@ -691,7 +808,10 @@ function startDrawPresentation(room, broadcast) {
     }, drawFinishMs);
   };
 
-  room.presentationTimer = setTimeout(beginDraw, discardMs);
+  room.presentationTimer = setTimeout(
+    beginDraw,
+    room.game.midHandReshuffle ? 900 : discardMs
+  );
 }
 
 function scheduleAutoNext(room, broadcast) {
@@ -745,6 +865,10 @@ function startNewMatch(room, broadcast) {
     participant.eliminated = false;
     participant.blockedFromSeat = false;
     participant.pendingSeatRelease = false;
+    participant.rewindEligible = false;
+    participant.rewindStage = 0;
+    participant.revivalsUsed = 0;
+    participant.stack = room.startingChips;
   }
   seatWaitingParticipants(room);
   const onlinePlayers = roomSeatDescriptors(room);
@@ -763,6 +887,8 @@ function startNewMatch(room, broadcast) {
   Engine.startNextHand(room.game);
   room.paused = false;
   room.matchStartedAt = Date.now();
+  clearRewindWindow(room);
+  room.rewindViewers.clear();
   cancelAutoNext(room);
   startInitialPresentation(room, broadcast);
 }
@@ -771,18 +897,74 @@ function handleCompletedHand(room) {
   if (!room.game || room.game.phase !== "complete") {
     return;
   }
+  const outrightWinnerIndex = room.game.summary?.outrightWinner;
+  const outrightWinner =
+    Number.isInteger(outrightWinnerIndex)
+      ? room.game.players[outrightWinnerIndex]
+      : null;
   for (const participant of room.users.values()) {
     if (participant.seat === null) {
       continue;
     }
     const gamePlayer = room.game.players[participant.seat];
+    if (!gamePlayer || gamePlayer.id !== participant.id) {
+      continue;
+    }
     if (gamePlayer && gamePlayer.eliminated) {
       participant.eliminated = true;
+      participant.stack = 0;
+      if (participant.revivalsUsed < 3) {
+        participant.rewindEligible = true;
+        participant.rewindStage = participant.revivalsUsed + 1;
+        appendSystemChat(
+          room,
+          `${participant.name} 已成为${participant.rewindStage}转回溯者。`
+        );
+      } else {
+        participant.rewindEligible = false;
+        participant.rewindStage = 0;
+        participant.pendingSeatRelease = true;
+        appendSystemChat(room, `${participant.name} 已用完三次回溯，正式出局。`);
+      }
+    } else if (gamePlayer) {
+      participant.stack = gamePlayer.stack;
+      participant.eliminated = false;
     }
     if (participant.pendingRemoval || participant.leaving) {
       participant.pendingSeatRelease = true;
     }
   }
+  if (
+    outrightWinner &&
+    !room.game.tableOver
+  ) {
+    const acceptedRewinders = Array.from(room.rewindViewers.entries()).filter(
+      ([rewinderId, targetId]) => {
+        const rewinder = room.users.get(rewinderId);
+        return (
+          targetId === outrightWinner.id &&
+          rewinder?.rewindEligible &&
+          rewinder.revivalsUsed < 3
+        );
+      }
+    );
+    acceptedRewinders.forEach(([rewinderId]) => {
+      const rewinder = room.users.get(rewinderId);
+      rewinder.revivalsUsed += 1;
+      rewinder.stack = Math.max(1, Math.floor(room.startingChips / 2));
+      rewinder.eliminated = false;
+      rewinder.rewindEligible = false;
+      rewinder.pendingSeatRelease = false;
+      rewinder.blockedFromSeat = false;
+      appendSystemChat(
+        room,
+        `${rewinder.name} 因见证 ${outrightWinner.name} 获胜而复活，并获得 ${
+          room.startingChips / 2
+        } 筹码。`
+      );
+    });
+  }
+  room.rewindViewers.clear();
   if (room.game.tableOver) {
     room.status = "matchOver";
     cancelAutoNext(room);
@@ -853,6 +1035,14 @@ function makePublicGame(room, viewerId) {
     game.summary = null;
     game.tableOver = null;
     game.openingIndex = null;
+    game.openerIndex = null;
+    if (
+      presentation.kind === "draw" &&
+      presentation.stage !== "opening2"
+    ) {
+      game.secondOpenerIndex = null;
+      game.secondOpeningFallback = false;
+    }
     game.logs = game.logs.filter(
       (entry) =>
         entry.hand !== game.handNo ||
@@ -874,17 +1064,93 @@ function makePublicGame(room, viewerId) {
       }
     });
   }
+  const rewindTargetId = room.rewindViewers.get(viewerId) || null;
   game.players.forEach((player) => {
     const isSelf = player.id === viewerId;
+    const rewindRevealed =
+      Boolean(rewindTargetId) &&
+      player.id === rewindTargetId &&
+      Boolean(player.holeCard);
     const revealed =
       !room.presentation && actualPhase === "complete" && player.revealed;
-    if (!isSelf && !revealed) {
+    player.rewindRevealed = rewindRevealed;
+    if (!isSelf && !revealed && !rewindRevealed) {
       player.hasHiddenHole = Boolean(player.holeCard);
       player.holeCard = null;
     }
   });
   game.equity = equity;
   return game;
+}
+
+function makeRewindView(room, participant) {
+  const window = room.rewindWindow;
+  if (!window || window.handNo !== room.game?.handNo) {
+    return {
+      active: false,
+      selfEligible: Boolean(participant.rewindEligible),
+      targets: [],
+      outgoing: null,
+      incoming: [],
+      acceptedTargetId: room.rewindViewers.get(participant.id) || null,
+      deadline: null
+    };
+  }
+  const targets = Array.from(room.users.values())
+    .filter(
+      (entry) =>
+        entry.seat !== null &&
+        !entry.eliminated &&
+        room.game &&
+        !room.game.players[entry.seat]?.eliminated
+    )
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      avatarUrl: entry.avatarUrl || "preset:jester",
+      seat: entry.seat
+    }));
+  const outgoing = window.requests.get(participant.id) || null;
+  const incoming = Array.from(window.requests.values())
+    .filter(
+      (request) =>
+        request.targetId === participant.id && request.status === "pending"
+    )
+    .map((request) => {
+      const rewinder = room.users.get(request.rewinderId);
+      return {
+        rewinderId: request.rewinderId,
+        rewinderName: rewinder?.name || "回溯者",
+        avatarUrl: rewinder?.avatarUrl || "preset:jester",
+        deadline: request.deadline
+      };
+    });
+  return {
+    active: true,
+    selfEligible: Boolean(participant.rewindEligible),
+    targets,
+    outgoing,
+    incoming,
+    acceptedTargetId: room.rewindViewers.get(participant.id) || null,
+    deadline: window.deadline
+  };
+}
+
+function appendSystemChat(room, text) {
+  const message = {
+    id: `chat_${++room.chatSequence}`,
+    kind: "system",
+    text,
+    userId: null,
+    name: "系统",
+    avatarUrl: "preset:jester",
+    createdAt: Date.now()
+  };
+  room.chatMessages.push(message);
+  if (room.chatMessages.length > 50) {
+    room.chatMessages.splice(0, room.chatMessages.length - 50);
+  }
+  return message;
 }
 
 function makeRoomView(room, participant) {
@@ -899,6 +1165,10 @@ function makeRoomView(room, participant) {
       isHost: entry.id === room.hostId,
       isSelf: entry.id === participant.id,
       eliminated: Boolean(entry.eliminated),
+      rewindEligible: Boolean(entry.rewindEligible),
+      rewindStage: entry.rewindStage || 0,
+      revivalsUsed: entry.revivalsUsed || 0,
+      voiceActive: Boolean(entry.voiceActive),
       pendingSeatRelease: Boolean(entry.pendingSeatRelease),
       chatMuted: Boolean(entry.chatMuted)
     }));
@@ -927,12 +1197,25 @@ function makeRoomView(room, participant) {
               name: entry.name,
               avatarUrl: entry.avatarUrl || "preset:jester",
               connected: entry.connected,
-              eliminated: Boolean(entry.eliminated)
+              eliminated: Boolean(entry.eliminated),
+              rewindEligible: Boolean(entry.rewindEligible),
+              rewindStage: entry.rewindStage || 0,
+              stack: Number.isFinite(entry.stack) ? entry.stack : null,
+              voiceActive: Boolean(entry.voiceActive)
             }
           : null;
       }),
       spectators: users.filter((entry) => entry.seat === null),
+      rewinders: users.filter((entry) => entry.rewindEligible),
       self: users.find((entry) => entry.id === participant.id),
+      rewind: makeRewindView(room, participant),
+      voice: {
+        iceServers: VOICE_ICE_SERVERS,
+        canJoin: Boolean(
+          participant.seat !== null || participant.rewindEligible
+        ),
+        selfActive: Boolean(participant.voiceActive)
+      },
       chat: {
         enabled: room.chatEnabled,
         messages: room.chatMessages.slice(),
@@ -999,6 +1282,10 @@ function createGameServer(options = {}) {
 
   function deleteRoom(room) {
     cancelAutoNext(room);
+    if (room.rewindTimer) {
+      clearTimeout(room.rewindTimer);
+      room.rewindTimer = null;
+    }
     if (room.presentationTimer) {
       clearTimeout(room.presentationTimer);
       room.presentationTimer = null;
@@ -1238,6 +1525,7 @@ function createGameServer(options = {}) {
   }
 
   function removeParticipant(room, participant) {
+    participant.voiceActive = false;
     if (participant.socket) {
       participant.socket.close(4003, "left room");
       participant.socket = null;
@@ -1480,6 +1768,99 @@ function createGameServer(options = {}) {
     }
   }
 
+  function handleRewindSelect(room, participant, message) {
+    if (!room.rewindWindow || room.rewindWindow.handNo !== room.game?.handNo) {
+      throw new RequestError(409, "当前不在回溯选择阶段。");
+    }
+    if (!participant.rewindEligible) {
+      throw new RequestError(403, "只有回溯者可以发起查看请求。");
+    }
+    if (room.rewindWindow.requests.has(participant.id)) {
+      throw new RequestError(409, "本手已经提交过回溯选择。");
+    }
+    if (!message.targetId) {
+      room.rewindWindow.requests.set(participant.id, {
+        rewinderId: participant.id,
+        targetId: null,
+        status: "skipped",
+        createdAt: Date.now(),
+        deadline: room.rewindWindow.deadline
+      });
+      maybeFinalizeRewindWindow(room, broadcast);
+      return;
+    }
+    const target = room.users.get(String(message.targetId));
+    if (
+      !target ||
+      target.id === participant.id ||
+      target.seat === null ||
+      target.eliminated ||
+      target.rewindEligible ||
+      !room.game ||
+      room.game.players[target.seat]?.eliminated
+    ) {
+      throw new RequestError(400, "请选择一名当前在座玩家。");
+    }
+    room.rewindWindow.requests.set(participant.id, {
+      rewinderId: participant.id,
+      targetId: target.id,
+      status: "pending",
+      createdAt: Date.now(),
+      deadline: Math.min(Date.now() + 10_000, room.rewindWindow.deadline)
+    });
+    broadcast(room);
+  }
+
+  function handleRewindRespond(room, participant, message) {
+    if (!room.rewindWindow) {
+      throw new RequestError(409, "回溯请求已经结束。");
+    }
+    const request = room.rewindWindow.requests.get(
+      String(message.rewinderId || "")
+    );
+    if (!request || request.targetId !== participant.id) {
+      throw new RequestError(404, "找不到发给你的回溯请求。");
+    }
+    if (request.status !== "pending" || request.deadline < Date.now()) {
+      throw new RequestError(409, "这个回溯请求已经过期。");
+    }
+    request.status = message.accepted ? "accepted" : "declined";
+    request.respondedAt = Date.now();
+    if (message.accepted) {
+      room.rewindViewers.set(request.rewinderId, participant.id);
+    }
+    if (maybeFinalizeRewindWindow(room, broadcast)) {
+      return;
+    }
+    broadcast(room);
+  }
+
+  function handleVoiceState(room, participant, message) {
+    if (participant.seat === null && !participant.rewindEligible) {
+      throw new RequestError(403, "只有在座玩家和回溯者可以加入语音。");
+    }
+    participant.voiceActive = Boolean(message.active);
+    broadcast(room);
+  }
+
+  function handleVoiceSignal(room, participant, message) {
+    if (!participant.voiceActive) {
+      throw new RequestError(403, "请先加入实时语音。");
+    }
+    const target = room.users.get(String(message.targetId || ""));
+    if (!target || !target.voiceActive || !target.socket) {
+      return;
+    }
+    if (!message.signal || typeof message.signal !== "object") {
+      throw new RequestError(400, "语音信令格式不正确。");
+    }
+    sendSocket(target.socket, {
+      type: "voice:signal",
+      fromId: participant.id,
+      signal: message.signal
+    });
+  }
+
   function handleSocketMessage(socket, raw) {
     let message;
     try {
@@ -1533,6 +1914,14 @@ function createGameServer(options = {}) {
         renameParticipant(room, participant, message.name);
       } else if (message.type === "early-fold") {
         handleEarlyFold(room, participant, message);
+      } else if (message.type === "rewind:select") {
+        handleRewindSelect(room, participant, message);
+      } else if (message.type === "rewind:respond") {
+        handleRewindRespond(room, participant, message);
+      } else if (message.type === "voice:state") {
+        handleVoiceState(room, participant, message);
+      } else if (message.type === "voice:signal") {
+        handleVoiceSignal(room, participant, message);
       } else if (message.type === "chat:send") {
         handleChatMessage(room, participant, message);
       } else if (message.type === "emote:throw") {
@@ -1615,6 +2004,7 @@ function createGameServer(options = {}) {
       if (participant && participant.socket === socket) {
         participant.socket = null;
         participant.connected = false;
+        participant.voiceActive = false;
         touchRoom(room);
         broadcast(room);
       }
@@ -1742,6 +2132,9 @@ function createGameServer(options = {}) {
           chatEnabled: true,
           chatMessages: [],
           chatSequence: 0,
+      rewindWindow: null,
+      rewindTimer: null,
+      rewindViewers: new Map(),
           avatarIds: new Set(),
           createdAt: now,
           lastActiveAt: now,
@@ -1974,6 +2367,8 @@ if (require.main === module) {
 
 module.exports = {
   createGameServer,
+  handleCompletedHand,
+  makePublicGame,
   normalizeName,
   seatCapFromValue,
   normalizeStakeSettings,

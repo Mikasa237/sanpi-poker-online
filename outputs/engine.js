@@ -321,6 +321,11 @@
       discardCard: null,
       openerIndex: null,
       openingFallback: false,
+      secondOpenerIndex: null,
+      secondOpeningFallback: false,
+      firstRoundRaised: false,
+      midHandReshuffle: false,
+      carryPot: 0,
       dealOrder: [],
       actorIndex: null,
       currentBet: 0,
@@ -418,6 +423,41 @@
     return best;
   }
 
+  function findSecondOpeningPlayer(state, order) {
+    const eligible = order.filter(
+      (index) =>
+        !state.players[index].folded &&
+        state.players[index].drawCard &&
+        state.players[index].drawCard.kind !== "wild"
+    );
+    if (eligible.length === 0) {
+      state.secondOpeningFallback = true;
+      return (
+        seatOrder(
+          state.players.length,
+          (state.dealerIndex + 1) % state.players.length
+        ).find(
+          (index) =>
+            !state.players[index].eliminated && !state.players[index].folded
+        ) ?? null
+      );
+    }
+    state.secondOpeningFallback = false;
+    let best = eligible[0];
+    for (let index = 1; index < eligible.length; index += 1) {
+      const candidate = eligible[index];
+      if (
+        compareOpeningCards(
+          state.players[candidate].drawCard,
+          state.players[best].drawCard
+        ) > 0
+      ) {
+        best = candidate;
+      }
+    }
+    return best;
+  }
+
   function aliveIndices(players) {
     return players
       .filter((player) => !player.eliminated && !player.folded)
@@ -488,6 +528,11 @@
     state.phase = "dealing";
     state.summary = null;
     state.openerIndex = null;
+    state.openingFallback = false;
+    state.secondOpenerIndex = null;
+    state.secondOpeningFallback = false;
+    state.firstRoundRaised = false;
+    state.midHandReshuffle = false;
     state.actorIndex = null;
     state.currentBet = 0;
     state.minRaise = state.config.minBet;
@@ -587,6 +632,10 @@
 
   function roundPot(players) {
     return players.reduce((sum, player) => sum + player.handContribution, 0);
+  }
+
+  function totalPot(state) {
+    return roundPot(state.players) + (state.carryPot || 0);
   }
 
   function getLegalActions(state, playerIndex) {
@@ -708,6 +757,9 @@
       payChips(player, added);
       state.currentBet = target;
       state.minRaise = state.config.minBet;
+      if (state.phase === "bet1" && previousBet > 0) {
+        state.firstRoundRaised = true;
+      }
       player.lastAction =
         previousBet === 0 ? `下注 ${target}` : `加注到 ${target}`;
       addLog(state, "action", playerIndex, `${player.name} ${player.lastAction}。`);
@@ -716,11 +768,15 @@
         throw new Error("当前不能全下。");
       }
       const before = player.roundContribution;
+      const previousBet = state.currentBet;
       const paid = payChips(player, player.stack);
       player.allIn = true;
       if (player.roundContribution > state.currentBet) {
         state.currentBet = player.roundContribution;
         state.minRaise = state.config.minBet;
+        if (state.phase === "bet1" && previousBet > 0) {
+          state.firstRoundRaised = true;
+        }
       }
       player.lastAction = `全下 ${paid}`;
       addLog(
@@ -827,8 +883,18 @@
 
   function finishBettingRound(state) {
     if (state.phase === "bet1") {
-      state.discardCard = state.deck.shift();
       const alive = aliveIndices(state.players);
+      if (state.firstRoundRaised && alive.length > 1) {
+        state.deck = shuffleInPlace(state.deck, state);
+        state.midHandReshuffle = true;
+        addLog(
+          state,
+          "phase",
+          null,
+          "第一轮出现加注，剩余牌堆重新洗牌后继续发出第三张牌。"
+        );
+      }
+      state.discardCard = state.deck.shift();
       const start = alive.includes(state.openerIndex)
         ? state.openerIndex
         : firstAliveFrom(state, state.openerIndex);
@@ -838,6 +904,11 @@
       });
       resetRoundContributions(state);
       state.phase = "bet2";
+      state.secondOpenerIndex = findSecondOpeningPlayer(state, drawOrder);
+      const secondOpener =
+        state.secondOpenerIndex === null
+          ? null
+          : state.players[state.secondOpenerIndex];
       addLog(
         state,
         "phase",
@@ -846,15 +917,24 @@
           .map((index) => state.players[index].name)
           .join("、")} 的顺序公开摸牌。`
       );
+      if (secondOpener) {
+        addLog(
+          state,
+          "opening",
+          state.secondOpenerIndex,
+          state.secondOpeningFallback
+            ? `第三张牌均为赖子，按庄家顺序由 ${secondOpener.name} 先下注。`
+            : `${secondOpener.name} 以第三张牌 ${cardText(
+                secondOpener.drawCard
+              )} 取得第二轮先手。`
+        );
+      }
       const actionable = actionableIndices(state.players);
       if (actionable.length <= 1) {
         completeHand(state, "无人可继续下注");
         return;
       }
-      state.actorIndex =
-        alive.includes(state.openerIndex)
-          ? state.openerIndex
-          : firstAliveFrom(state, state.openerIndex);
+      state.actorIndex = state.secondOpenerIndex;
       if (!needsAction(state, state.actorIndex)) {
         state.actorIndex = nextNeedingAction(state, state.actorIndex);
       }
@@ -909,7 +989,7 @@
       cards: cards.slice(),
       naturalCards: naturalCards.slice(),
       score: null,
-      key: [2, tier, -targetRank.value].concat(naturalSuits)
+      key: [2, tier, -targetRank.value]
     };
   }
 
@@ -963,7 +1043,8 @@
       cards: cards.slice(),
       naturalCards: naturalCards.slice(),
       score: sum,
-      key: [1, sum].concat(tiebreak)
+      tiebreak,
+      key: [1, sum]
     };
   }
 
@@ -1008,6 +1089,7 @@
     const layers = createPotLayers(state);
     const awards = new Map();
     const settlements = [];
+    let carriedAmount = 0;
 
     layers.forEach((layer, layerIndex) => {
       let winners = [];
@@ -1035,27 +1117,49 @@
         winners = layer.eligible.filter((index) => forcedWinners.includes(index));
       }
       if (!winners.length) {
+        carriedAmount += layer.amount;
+        settlements.push({
+          index: layerIndex,
+          level: layer.level,
+          amount: layer.amount,
+          eligible: layer.eligible.slice(),
+          winners: [],
+          carried: true
+        });
         return;
       }
       winners = winnerClubhouseOrder(state, winners);
-      const share = Math.floor(layer.amount / winners.length);
-      const remainder = layer.amount - share * winners.length;
-      winners.forEach((index, winnerOffset) => {
-        const amount = share + (winnerOffset < remainder ? 1 : 0);
+      if (winners.length > 1) {
+        carriedAmount += layer.amount;
+        settlements.push({
+          index: layerIndex,
+          level: layer.level,
+          amount: layer.amount,
+          eligible: layer.eligible.slice(),
+          winners: winners.slice(),
+          carried: true
+        });
+        return;
+      }
+      const index = winners[0];
+      const amount = layer.amount;
+      if (amount > 0) {
         state.players[index].stack += amount;
         awards.set(index, (awards.get(index) || 0) + amount);
-      });
+      }
       settlements.push({
         index: layerIndex,
         level: layer.level,
         amount: layer.amount,
         eligible: layer.eligible.slice(),
-        winners: winners.slice()
+        winners: winners.slice(),
+        carried: false
       });
     });
 
     return {
       settlements,
+      carriedAmount,
       awards: Array.from(awards.entries()).map(([index, amount]) => ({
         playerIndex: index,
         playerId: state.players[index].id,
@@ -1144,12 +1248,46 @@
       evaluations.sort((a, b) => compareEvaluations(b.evaluation, a.evaluation));
     }
 
-    const potTotal = roundPot(state.players);
+    const carryPotIn = state.carryPot || 0;
+    const potTotal = roundPot(state.players) + carryPotIn;
     const payout = settlePots(
       state,
       evaluationsByPlayer,
       showdown ? null : alive
     );
+    let outrightWinner = null;
+    if (showdown && evaluations.length) {
+      const top = evaluations[0].evaluation;
+      const topEntries = evaluations.filter(
+        (entry) => compareEvaluations(entry.evaluation, top) === 0
+      );
+      if (topEntries.length === 1) {
+        outrightWinner = topEntries[0].playerIndex;
+      }
+    } else if (!showdown && alive.length === 1) {
+      outrightWinner = alive[0];
+    }
+    const awardsByPlayer = new Map(
+      payout.awards.map((award) => [award.playerIndex, award.amount])
+    );
+    if (outrightWinner !== null && carryPotIn > 0) {
+      state.players[outrightWinner].stack += carryPotIn;
+      awardsByPlayer.set(
+        outrightWinner,
+        (awardsByPlayer.get(outrightWinner) || 0) + carryPotIn
+      );
+    }
+    const awards = Array.from(awardsByPlayer.entries()).map(
+      ([playerIndex, amount]) => ({
+        playerIndex,
+        playerId: state.players[playerIndex].id,
+        name: state.players[playerIndex].name,
+        amount
+      })
+    );
+    const carryPotOut =
+      (outrightWinner === null ? carryPotIn : 0) + payout.carriedAmount;
+    state.carryPot = carryPotOut;
     const tableOver = updateEliminations(state);
     state.phase = "complete";
     state.actorIndex = null;
@@ -1162,19 +1300,24 @@
       potTotal,
       evaluations,
       settlements: payout.settlements,
-      awards: payout.awards,
-      winners: payout.awards.map((award) => award.playerIndex),
+      awards,
+      winners: awards.map((award) => award.playerIndex),
+      outrightWinner,
+      carryPotIn,
+      carryPotOut,
       startingStacks: state.startingStacks.slice(),
       tableOver: tableOver ? clone(tableOver) : null
     };
-    const awardText = payout.awards
+    const awardText = awards
       .map((award) => `${award.name} +${award.amount}`)
       .join("，");
     addLog(
       state,
       "result",
       null,
-      `第 ${state.handNo} 手结束，${reason}。${awardText || "底池为空"}。`
+      `第 ${state.handNo} 手结束，${reason}。${awardText || "底池为空"}。${
+        carryPotOut ? `累计底池保留 ${carryPotOut}。` : ""
+      }`
     );
     return state;
   }
@@ -1557,6 +1700,7 @@
     evaluateHand,
     compareEvaluations,
     findOpeningPlayer,
+    findSecondOpeningPlayer,
     settlePots,
     updateEliminations,
     syncOnlineSeats,
@@ -1567,6 +1711,7 @@
     phaseLabel,
     aliveIndices,
     roundPot,
+    totalPot,
     cardText,
     clone
   };

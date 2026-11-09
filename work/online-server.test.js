@@ -7,7 +7,11 @@ const { WebSocket } = require("../outputs/node_modules/ws");
 const Engine = require("../outputs/engine.js");
 process.env.SESSION_SECRET ||= "test-session-secret";
 process.env.HOST_ISSUE_SECRET ||= "test-host-issue-secret";
-const { createGameServer } = require("../outputs/server.js");
+const {
+  createGameServer,
+  handleCompletedHand,
+  makePublicGame
+} = require("../outputs/server.js");
 
 async function startServer(options = {}) {
   const app = createGameServer(
@@ -855,6 +859,7 @@ test("dealing presentation masks cards and blocks betting until finished", async
   );
   assert.equal(drawing.room.game.discardCard, null);
   assert.equal(drawing.room.game.hasDiscard, true);
+  assert.equal(drawing.room.game.secondOpenerIndex, null);
   hostClient.close();
   guestClient.close();
 });
@@ -989,6 +994,158 @@ test("a player can fold early before their turn", async (t) => {
   hostClient.close();
   guestClient.close();
   thirdClient.close();
+});
+
+test("rewind consent reveals only the approved hole card and revives on a win", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "回溯测试房主", 3);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "目标玩家");
+  const ghostJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "回溯玩家");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  const ghostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    ghostJoin.payload.token
+  );
+  hostClient.send({ type: "host:start" });
+  await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
+  );
+
+  const room = server.app.rooms.get(hostRoom.roomCode);
+  const ghost = room.users.get(ghostJoin.payload.userId);
+  const target = room.users.get(guestJoin.payload.userId);
+  const ghostPlayer = room.game.players[ghost.seat];
+  ghostPlayer.eliminated = true;
+  ghostPlayer.stack = 0;
+  room.game.summary = {
+    outrightWinner: target.seat,
+    winners: [target.seat],
+    awards: [{ playerIndex: target.seat, amount: 10 }]
+  };
+  room.game.tableOver = null;
+  room.game.phase = "complete";
+  handleCompletedHand(room);
+  assert.equal(ghost.rewindEligible, true);
+  assert.equal(ghost.rewindStage, 1);
+  assert.ok(room.chatMessages.some((message) => /1转回溯者/.test(message.text)));
+
+  room.game.phase = "bet1";
+  room.rewindWindow = {
+    handNo: room.game.handNo,
+    deadline: Date.now() + 10000,
+    requests: new Map()
+  };
+  room.status = "rewind";
+  ghostClient.send({ type: "rewind:select", targetId: target.id });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const request = room.rewindWindow.requests.get(ghost.id);
+  assert.equal(
+    request.rewinderId,
+    ghost.id,
+    JSON.stringify(Array.from(room.rewindWindow.requests.entries()))
+  );
+  assert.equal(request.targetId, target.id);
+  guestClient.send({
+    type: "rewind:respond",
+    rewinderId: ghost.id,
+    accepted: true
+  });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(room.rewindViewers.get(ghost.id), target.id);
+  const approved = makePublicGame(room, ghost.id);
+  assert.equal(approved.players[target.seat].rewindRevealed, true);
+  assert.ok(approved.players[target.seat].holeCard);
+  const other = approved.players.find(
+    (player) =>
+      !player.id.startsWith("empty-") &&
+      player.id !== target.id &&
+      player.id !== ghost.id
+  );
+  assert.equal(other.holeCard, null);
+
+  room.game.summary = {
+    outrightWinner: target.seat,
+    winners: [target.seat],
+    awards: [{ playerIndex: target.seat, amount: 20 }]
+  };
+  room.game.tableOver = null;
+  room.game.phase = "complete";
+  handleCompletedHand(room);
+  assert.equal(ghost.revivalsUsed, 1);
+  assert.equal(ghost.stack, 500);
+  assert.equal(ghost.eliminated, false);
+  assert.equal(ghost.rewindEligible, false);
+
+  ghost.revivalsUsed = 3;
+  ghost.eliminated = true;
+  ghost.rewindEligible = true;
+  room.game.players[ghost.seat].eliminated = true;
+  room.game.players[ghost.seat].stack = 0;
+  room.game.tableOver = null;
+  handleCompletedHand(room);
+  assert.equal(ghost.rewindEligible, false);
+  assert.equal(ghost.pendingSeatRelease, true);
+
+  hostClient.close();
+  guestClient.close();
+  ghostClient.close();
+});
+
+test("voice state and signaling are restricted to eligible room members", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "语音房主", 2);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "语音访客");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  hostClient.send({ type: "voice:state", active: true });
+  guestClient.send({ type: "voice:state", active: true });
+  const voiceState = await hostClient.waitFor(
+    (message) =>
+      message.room?.users?.filter((user) => user.voiceActive).length === 2
+  );
+  assert.equal(voiceState.room.voice.canJoin, true);
+  hostClient.send({
+    type: "voice:signal",
+    targetId: guestJoin.payload.userId,
+    signal: { type: "description", description: { type: "offer", sdp: "x" } }
+  });
+  const signal = await guestClient.waitFor(
+    (message) => message.type === "voice:signal"
+  );
+  assert.equal(signal.fromId, hostRoom.userId);
+  assert.equal(signal.signal.description.type, "offer");
+  hostClient.send({ type: "voice:state", active: false });
+  await guestClient.waitFor(
+    (message) =>
+      message.room?.users?.find((user) => user.id === hostRoom.userId)
+        ?.voiceActive === false
+  );
+  hostClient.close();
+  guestClient.close();
 });
 
 test("permanent host links verify and can create multiple rooms", async (t) => {

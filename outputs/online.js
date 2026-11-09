@@ -117,6 +117,7 @@
     unreadChat: 0,
     lastPresentationSequence: 0,
     lastPresentationKey: "",
+    lastShuffleCeremonyKey: "",
     lastChatMessageId: null,
     pendingChatBubble: null,
     lastTurnAlertSignature: "",
@@ -124,7 +125,18 @@
     voiceQueue: [],
     voicePlaying: false,
     voiceCache: new Map(),
-    audioContext: null
+    audioContext: null,
+    rewindTickTimer: null,
+    voiceJoined: false,
+    voiceMicEnabled: true,
+    voiceLocalStream: null,
+    voicePeers: new Map(),
+    voiceAnalysers: new Map(),
+    voiceAudioContext: null,
+    voiceMutedUsers: new Set(),
+    voiceSpeakingUsers: new Set(),
+    voiceMeterTimer: null,
+    voiceIceServers: [{ urls: "stun:stun.cloudflare.com:3478" }]
   };
 
   const el = {};
@@ -158,6 +170,7 @@
     "onlineSoundToggle",
     "onlineMotionToggle",
     "rulesButton",
+    "voiceButton",
     "mobileToolsButton",
     "leaveRoomButton",
     "lobbyArea",
@@ -182,6 +195,7 @@
     "transferHostButton",
     "onlineGameArea",
     "onlineTableShell",
+    "onlineShuffleCeremony",
     "mobileOpponentsToggle",
     "mobileOpponentSummary",
     "mobileOpponentDetail",
@@ -190,6 +204,19 @@
     "onlineTurnAlert",
     "onlineTurnAlertText",
     "onlineGoToActionButton",
+    "rewindPanel",
+    "rewindTitle",
+    "rewindCountdown",
+    "rewindDescription",
+    "rewindSelectArea",
+    "rewindTargetSelect",
+    "rewindRequestButton",
+    "rewindSkipButton",
+    "rewindIncomingArea",
+    "rewindIncomingText",
+    "rewindAcceptButton",
+    "rewindDeclineButton",
+    "rewindViewNotice",
     "onlineSeatLayer",
     "onlineHumanHandZone",
     "spectatorNotice",
@@ -212,6 +239,7 @@
     "onlineRaiseLabel",
     "onlineRaiseValue",
     "onlineRaiseSlider",
+    "onlineRaiseInput",
     "onlineRaiseButton",
     "onlineQuickRaises",
     "onlineFoldButton",
@@ -248,7 +276,16 @@
     "onlineActionDock",
     "onlineMoreTools",
     "mobileToolsCloseButton",
+    "mobileRulesButton",
+    "mobileLeaveButton",
     "mobileToolsBackdrop",
+    "voicePanel",
+    "voiceStatusText",
+    "voiceJoinButton",
+    "voiceMicButton",
+    "voiceLeaveButton",
+    "voiceParticipants",
+    "voiceError",
     "equityTab",
     "chatTab",
     "chatUnreadBadge",
@@ -844,6 +881,8 @@
         handleIncomingChat(message.message);
       } else if (message.type === "room:emote") {
         animateIncomingEmote(message.message);
+      } else if (message.type === "voice:signal") {
+        handleVoiceSignal(message.fromId, message.signal);
       } else if (message.type === "room:chat-history") {
         if (state.room?.chat) {
           state.room.chat.messages = message.messages;
@@ -864,6 +903,7 @@
       if (state.intentionalClose) {
         return;
       }
+      leaveVoice(false);
       if (event.code === 4001) {
         state.intentionalClose = true;
         setConnection("reconnecting", "已被新页面接管");
@@ -1003,6 +1043,22 @@
       () => playTone(type === "raise" ? 620 : 460, 0.07, 0.008, "triangle"),
       45
     );
+  }
+
+  function playShuffleCeremonySound() {
+    playNoiseBurst(0.28, 0.012, 1200);
+    [0, 120, 240, 360].forEach((delay, index) => {
+      window.setTimeout(
+        () => playNoiseBurst(0.09, 0.006, 900 + index * 260),
+        delay
+      );
+    });
+    [0, 220, 440].forEach((delay, index) => {
+      window.setTimeout(
+        () => playTone(180 + index * 70, 0.1, 0.008, "triangle"),
+        delay
+      );
+    });
   }
 
   function playResultSoundForGame(game) {
@@ -1416,7 +1472,8 @@
       player.folded ? "is-folded" : "",
       player.eliminated ? "is-eliminated" : "",
       !connected ? "is-offline" : "",
-      isWinner ? "is-winner" : ""
+      isWinner ? "is-winner" : "",
+      player.rewindRevealed ? "is-rewind-revealed" : ""
     ]
       .filter(Boolean)
       .join(" ");
@@ -1683,7 +1740,9 @@
     const actor =
       game.actorIndex !== null ? game.players[game.actorIndex] : null;
     el.headerRoomCode.textContent = state.room.code;
-    el.onlinePhaseText.textContent = game.tableOver
+    el.onlinePhaseText.textContent = state.room.status === "rewind"
+      ? "回溯选择阶段"
+      : game.tableOver
       ? "本局结束"
       : game.presentation?.kind === "initial"
         ? game.presentation.stage === "hole" &&
@@ -1696,9 +1755,15 @@
             ? "正在发明牌"
             : "正在确定先手"
         : game.presentation?.kind === "draw"
-          ? game.presentation.stage === "discard"
-            ? "正在暗弃一张牌"
-            : "正在依次摸牌"
+          ? game.presentation.stage === "reshuffle"
+            ? "第一轮加注 · 重新洗牌"
+            : game.presentation.stage === "discard"
+              ? "正在暗弃一张牌"
+              : game.presentation.stage === "opening2"
+                ? `第三张牌先手：${
+                    game.players[game.secondOpenerIndex]?.name || "等待确定"
+                  }`
+                : "正在依次摸牌"
       : game.phase === "bet1"
         ? "第一轮下注"
         : game.phase === "bet2"
@@ -1710,13 +1775,16 @@
       "is-complete",
       game.phase === "complete"
     );
-    el.onlinePotAmount.textContent = formatNumber(Engine.roundPot(game.players));
+    el.onlinePotAmount.textContent = formatNumber(Engine.totalPot(game));
     el.onlineDeckCount.textContent = `${game.deckCount ?? 0} 张`;
     el.onlineDiscardPile.classList.toggle(
       "has-card",
       Boolean(game.discardCard || game.hasDiscard)
     );
-    if (game.tableOver) {
+    if (state.room.status === "rewind") {
+      el.onlineTableHint.textContent =
+        "回溯者可选择查看目标，发牌在下注前暂时等待。";
+    } else if (game.tableOver) {
       el.onlineTableHint.textContent = game.tableOver.reason;
     } else if (game.presentation) {
       el.onlineTableHint.textContent =
@@ -1726,7 +1794,11 @@
             game.reshuffledThisHand
             ? "剩余牌堆不足，正在收回 94 张牌统一重洗。"
             : "牌正从牌堆发往每位玩家，请稍候。"
-          : "第三张牌正在依次公开。";
+          : game.presentation.stage === "reshuffle"
+            ? "第一轮出现加注，剩余牌堆正在重新洗牌。"
+            : game.presentation.stage === "opening2"
+              ? "第二轮由第三张牌点数最大者先下注，赖子不参与先手。"
+              : "第三张牌正在依次公开。";
     } else if (game.phase === "complete") {
       el.onlineTableHint.textContent = game.summary?.reason || "本手结束";
     } else if (actor) {
@@ -1742,6 +1814,21 @@
       .slice(-2)
       .map((entry) => entry.text);
     el.onlineMiniLog.textContent = latest.join(" ");
+  }
+
+  function renderShuffleCeremony(game) {
+    const active = game?.presentation?.stage === "reshuffle";
+    el.onlineShuffleCeremony.hidden = !active;
+    if (!active) {
+      state.lastShuffleCeremonyKey = "";
+      return;
+    }
+    const key = `${game.handNo}:reshuffle`;
+    if (state.lastShuffleCeremonyKey === key) {
+      return;
+    }
+    state.lastShuffleCeremonyKey = key;
+    playShuffleCeremonySound();
   }
 
   function sendPlayerAction(action) {
@@ -1851,7 +1938,7 @@
     if (isMyTurn) {
       const legal = Engine.getLegalActions(game, selfIndex);
       const need = Math.max(0, game.currentBet - self.roundContribution);
-      const pot = Engine.roundPot(game.players);
+      const pot = Engine.totalPot(game);
       const callAmount = legal.call ? legal.call.amount : need;
       el.onlineCallNeed.textContent = formatNumber(callAmount);
       el.onlineCurrentBet.textContent = formatNumber(game.currentBet);
@@ -1881,9 +1968,15 @@
         slider.min = String(legal.raise.min);
         slider.max = String(legal.raise.max);
         slider.step = String(legal.raise.step);
+        el.onlineRaiseInput.min = String(legal.raise.min);
+        el.onlineRaiseInput.max = String(legal.raise.max);
+        el.onlineRaiseInput.step = String(legal.raise.step);
         const value = Number(slider.value);
         if (!Number.isFinite(value) || value < legal.raise.min || value > legal.raise.max) {
           slider.value = String(legal.raise.min);
+        }
+        if (document.activeElement !== el.onlineRaiseInput) {
+          el.onlineRaiseInput.value = slider.value;
         }
         el.onlineRaiseLabel.textContent = `${legal.raise.label}到`;
         el.onlineRaiseButton.textContent = legal.raise.label;
@@ -1955,10 +2048,377 @@
     );
   }
 
+  function renderRewind(room) {
+    const info = room?.rewind;
+    const active = Boolean(info?.active);
+    const acceptedTarget = info?.acceptedTargetId
+      ? room.users.find((user) => user.id === info.acceptedTargetId)
+      : null;
+    const incoming = info?.incoming?.[0] || null;
+    const show =
+      active &&
+      (info.selfEligible || info.incoming?.length || info.outgoing);
+    el.rewindPanel.hidden = !show && !acceptedTarget;
+    if (el.rewindPanel.hidden) {
+      return;
+    }
+    const remaining = active
+      ? Math.max(0, Math.ceil((info.deadline - Date.now()) / 1000))
+      : 0;
+    el.rewindCountdown.textContent = active ? `${remaining}s` : "";
+    if (acceptedTarget) {
+      el.rewindTitle.textContent = `回溯视界：${acceptedTarget.name}`;
+      el.rewindDescription.textContent =
+        "对方已同意，你可以在本手看到其底牌；该信息只显示在你的浏览器。";
+      el.rewindSelectArea.hidden = true;
+      el.rewindIncomingArea.hidden = true;
+      el.rewindViewNotice.hidden = false;
+      el.rewindViewNotice.textContent = `正在查看 ${acceptedTarget.name} 的底牌`;
+      return;
+    }
+    el.rewindViewNotice.hidden = true;
+    el.rewindSelectArea.hidden = !(info.selfEligible && !info.outgoing);
+    el.rewindIncomingArea.hidden = !incoming;
+    el.rewindTitle.textContent = "回溯选择";
+    el.rewindDescription.textContent =
+      "你可以选择一名在座玩家，对方同意后查看其本手底牌。";
+    if (info.selfEligible && !info.outgoing) {
+      el.rewindTargetSelect.innerHTML = info.targets
+        .map(
+          (target) =>
+            `<option value="${escapeHtml(target.id)}">${escapeHtml(
+              target.name
+            )}</option>`
+        )
+        .join("");
+      el.rewindRequestButton.disabled = !info.targets.length;
+      el.rewindSkipButton.disabled = false;
+    }
+    if (info.outgoing) {
+      const target = room.users.find(
+        (user) => user.id === info.outgoing.targetId
+      );
+      el.rewindDescription.textContent =
+        info.outgoing.status === "pending"
+          ? `已请求 ${target?.name || "对方"}，等待同意。`
+          : info.outgoing.status === "accepted"
+            ? `${target?.name || "对方"} 已同意。`
+            : info.outgoing.status === "declined"
+              ? `${target?.name || "对方"} 拒绝了查看请求。`
+              : "本手选择不回溯。";
+    }
+    if (incoming) {
+      el.rewindIncomingText.textContent = `${incoming.rewinderName} 请求查看你的底牌，是否同意？`;
+    }
+  }
+
+  function renderVoice(room) {
+    const voice = room?.voice;
+    if (!voice) {
+      el.voicePanel.hidden = true;
+      el.voiceButton.hidden = true;
+      return;
+    }
+    state.voiceIceServers = voice.iceServers || state.voiceIceServers;
+    el.voiceButton.hidden = !voice.canJoin;
+    el.voiceButton.textContent = state.voiceJoined ? "语音中" : "语音";
+    el.voiceButton.classList.toggle("is-voice-active", state.voiceJoined);
+    el.voicePanel.hidden = !voice.canJoin;
+    el.voiceJoinButton.hidden = state.voiceJoined;
+    el.voiceMicButton.hidden = !state.voiceJoined;
+    el.voiceLeaveButton.hidden = !state.voiceJoined;
+    el.voiceMicButton.textContent = state.voiceMicEnabled
+      ? "关闭麦克风"
+      : "打开麦克风";
+    el.voiceStatusText.textContent = state.voiceJoined
+      ? state.voiceMicEnabled
+        ? "已加入 · 自由开麦"
+        : "已加入 · 麦克风关闭"
+      : "未加入语音";
+
+    const participants = room.users.filter(
+      (user) =>
+        user.voiceActive ||
+        (user.isSelf && state.voiceJoined)
+    );
+    el.voiceParticipants.innerHTML = participants.length
+      ? participants
+          .map((user) => {
+            const muted = state.voiceMutedUsers.has(user.id);
+            const speaking =
+              state.voiceSpeakingUsers.has(user.id) && !muted;
+            return `
+              <div class="voice-participant ${
+                speaking ? "is-speaking" : ""
+              }" data-voice-user="${escapeHtml(user.id)}">
+                ${avatarMarkup(user.avatarUrl)}
+                <div>
+                  <strong>${escapeHtml(user.name)}${
+                    user.isSelf ? "（你）" : ""
+                  }</strong>
+                  <span>${
+                    user.isSelf && !state.voiceMicEnabled
+                      ? "麦克风关闭"
+                      : muted
+                        ? "已本地静音"
+                        : speaking
+                          ? "正在说话"
+                          : "在语音"
+                  }</span>
+                </div>
+                ${
+                  user.isSelf
+                    ? ""
+                    : `<button type="button" class="text-button" data-voice-mute="${escapeHtml(
+                        user.id
+                      )}">${muted ? "取消静音" : "本地静音"}</button>`
+                }
+              </div>`;
+          })
+          .join("")
+      : '<p class="voice-empty">点击“加入语音”开始交流。</p>';
+  }
+
+  async function joinVoice() {
+    if (state.voiceJoined) {
+      return;
+    }
+    el.voiceError.hidden = true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: false
+      });
+      state.voiceLocalStream = stream;
+      state.voiceJoined = true;
+      state.voiceMicEnabled = true;
+      monitorVoiceStream("self", stream);
+      sendMessage({ type: "voice:state", active: true });
+      await syncVoicePeers();
+      renderVoice(state.room);
+    } catch (error) {
+      el.voiceError.textContent =
+        error?.name === "NotAllowedError"
+          ? "麦克风权限被拒绝，请在浏览器设置中允许后重试。"
+          : "无法打开麦克风，请检查设备或网络。";
+      el.voiceError.hidden = false;
+    }
+  }
+
+  function closeVoicePeer(userId) {
+    const peer = state.voicePeers.get(userId);
+    peer?.close();
+    state.voicePeers.delete(userId);
+    state.voiceAnalysers.delete(userId);
+    state.voiceSpeakingUsers.delete(userId);
+  }
+
+  async function leaveVoice(notify = true) {
+    if (notify && state.voiceJoined) {
+      sendMessage({ type: "voice:state", active: false });
+    }
+    state.voiceJoined = false;
+    state.voiceMicEnabled = true;
+    state.voiceLocalStream?.getTracks().forEach((track) => track.stop());
+    state.voiceLocalStream = null;
+    Array.from(state.voicePeers.keys()).forEach(closeVoicePeer);
+    state.voiceSpeakingUsers.clear();
+    clearInterval(state.voiceMeterTimer);
+    state.voiceMeterTimer = null;
+    renderVoice(state.room);
+  }
+
+  function toggleVoiceMic() {
+    state.voiceMicEnabled = !state.voiceMicEnabled;
+    state.voiceLocalStream
+      ?.getAudioTracks()
+      .forEach((track) => {
+        track.enabled = state.voiceMicEnabled;
+      });
+    renderVoice(state.room);
+  }
+
+  function ensureVoicePeer(remoteId, initiator = false) {
+    if (state.voicePeers.has(remoteId)) {
+      return state.voicePeers.get(remoteId).pc;
+    }
+    if (!window.RTCPeerConnection || !state.voiceJoined) {
+      return null;
+    }
+    const pc = new RTCPeerConnection({
+      iceServers: state.voiceIceServers
+    });
+    const peer = { pc };
+    state.voicePeers.set(remoteId, peer);
+    state.voiceLocalStream
+      ?.getTracks()
+      .forEach((track) => pc.addTrack(track, state.voiceLocalStream));
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        sendMessage({
+          type: "voice:signal",
+          targetId: remoteId,
+          signal: { type: "candidate", candidate: event.candidate }
+        });
+      }
+    };
+    pc.ontrack = (event) => {
+      monitorVoiceStream(remoteId, event.streams[0]);
+    };
+    pc.onconnectionstatechange = () => {
+      if (["failed", "closed"].includes(pc.connectionState)) {
+        closeVoicePeer(remoteId);
+      }
+    };
+    if (initiator) {
+      pc.createOffer()
+        .then((offer) => pc.setLocalDescription(offer))
+        .then(() =>
+          sendMessage({
+            type: "voice:signal",
+            targetId: remoteId,
+            signal: { type: "description", description: pc.localDescription }
+          })
+        )
+        .catch(() => closeVoicePeer(remoteId));
+    }
+    return pc;
+  }
+
+  async function syncVoicePeers() {
+    const room = state.room;
+    if (!room) {
+      return;
+    }
+    if (!state.voiceJoined) {
+      Array.from(state.voicePeers.keys()).forEach(closeVoicePeer);
+      return;
+    }
+    const activeIds = new Set(
+      room.users
+        .filter((user) => !user.isSelf && user.voiceActive)
+        .map((user) => user.id)
+    );
+    Array.from(state.voicePeers.keys()).forEach((userId) => {
+      if (!activeIds.has(userId)) {
+        closeVoicePeer(userId);
+      }
+    });
+    activeIds.forEach((userId) => {
+      const shouldOffer = room.self.id.localeCompare(userId) < 0;
+      ensureVoicePeer(userId, shouldOffer);
+    });
+  }
+
+  async function handleVoiceSignal(fromId, signal) {
+    if (!signal || !state.voiceJoined) {
+      return;
+    }
+    const pc = ensureVoicePeer(
+      fromId,
+      false
+    );
+    if (!pc) {
+      return;
+    }
+    try {
+      if (signal.type === "description") {
+        await pc.setRemoteDescription(signal.description);
+        if (signal.description?.type === "offer") {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          sendMessage({
+            type: "voice:signal",
+            targetId: fromId,
+            signal: { type: "description", description: pc.localDescription }
+          });
+        }
+      } else if (signal.type === "candidate" && signal.candidate) {
+        await pc.addIceCandidate(signal.candidate);
+      }
+    } catch {
+      closeVoicePeer(fromId);
+    }
+  }
+
+  function monitorVoiceStream(userId, stream) {
+    if (!stream || !window.AudioContext) {
+      return;
+    }
+    if (!state.voiceAudioContext) {
+      state.voiceAudioContext = new AudioContext();
+    }
+    const context = state.voiceAudioContext;
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    const gain = context.createGain();
+    gain.gain.value = state.voiceMutedUsers.has(userId) ? 0 : 1;
+    source.connect(analyser);
+    if (userId !== "self") {
+      analyser.connect(gain);
+      gain.connect(context.destination);
+    }
+    state.voiceAnalysers.set(userId, {
+      analyser,
+      gain,
+      source,
+      data: new Uint8Array(analyser.frequencyBinCount)
+    });
+    if (!state.voiceMeterTimer) {
+      state.voiceMeterTimer = setInterval(updateVoiceMeters, 240);
+    }
+  }
+
+  function updateVoiceMeters() {
+    let changed = false;
+    state.voiceAnalysers.forEach((entry, userId) => {
+      entry.analyser.getByteTimeDomainData(entry.data);
+      let sum = 0;
+      for (const value of entry.data) {
+        const normalized = (value - 128) / 128;
+        sum += normalized * normalized;
+      }
+      const speaking = Math.sqrt(sum / entry.data.length) > 0.045;
+      const had = state.voiceSpeakingUsers.has(userId);
+      if (speaking !== had) {
+        if (speaking) {
+          state.voiceSpeakingUsers.add(userId);
+        } else {
+          state.voiceSpeakingUsers.delete(userId);
+        }
+        changed = true;
+      }
+    });
+    if (changed) {
+      renderVoice(state.room);
+    }
+  }
+
+  function toggleLocalVoiceMute(userId) {
+    if (state.voiceMutedUsers.has(userId)) {
+      state.voiceMutedUsers.delete(userId);
+    } else {
+      state.voiceMutedUsers.add(userId);
+    }
+    const entry = state.voiceAnalysers.get(userId);
+    if (entry) {
+      entry.gain.gain.value = state.voiceMutedUsers.has(userId) ? 0 : 1;
+    }
+    renderVoice(state.room);
+  }
+
   function updateOnlineRaiseDisplay() {
     el.onlineRaiseValue.textContent = formatNumber(
       Number(el.onlineRaiseSlider.value)
     );
+    if (document.activeElement !== el.onlineRaiseInput) {
+      el.onlineRaiseInput.value = el.onlineRaiseSlider.value;
+    }
   }
 
   function setQuickRaise(kind) {
@@ -1972,7 +2432,7 @@
       return;
     }
     const self = game.players[selfIndex];
-    const pot = Engine.roundPot(game.players);
+    const pot = Engine.totalPot(game);
     const need = Math.max(0, game.currentBet - self.roundContribution);
     const step = legal.raise.step;
     let target = legal.raise.min;
@@ -1990,6 +2450,20 @@
     updateOnlineRaiseDisplay();
   }
 
+  function commitOnlineRaiseInput() {
+    const slider = el.onlineRaiseSlider;
+    const min = Number(slider.min);
+    const max = Number(slider.max);
+    const step = Math.max(1, Number(slider.step) || 1);
+    const raw = Number(el.onlineRaiseInput.value);
+    const safe = Number.isFinite(raw) ? raw : min;
+    const rounded =
+      Math.round(clamp(safe, min, max) / step) * step;
+    slider.value = String(clamp(rounded, min, max));
+    el.onlineRaiseInput.value = slider.value;
+    updateOnlineRaiseDisplay();
+  }
+
   function renderResult(game) {
     if (game.phase !== "complete" || !game.summary) {
       return;
@@ -1998,15 +2472,22 @@
     const self = state.room.self;
     const selfAward = summary.awards.find((award) => award.playerId === self.id);
     const selfPlayer = game.players.find((player) => player.id === self.id);
+    const selfUser = state.room.users.find((user) => user.id === self.id);
     el.onlineResultEyebrow.textContent = game.tableOver ? "本桌结束" : "本手结算";
     if (game.tableOver?.status === "won" && game.tableOver.winnerId === self.id) {
       el.onlineResultTitle.textContent = "你赢下了整桌";
     } else if (selfPlayer?.eliminated) {
-      el.onlineResultTitle.textContent = "筹码耗尽，已退出座位";
+      el.onlineResultTitle.textContent = selfUser?.rewindEligible
+        ? `${selfUser.rewindStage}转回溯者，可在下一手申请查看`
+        : "筹码耗尽，已退出座位";
     } else if (selfAward) {
       el.onlineResultTitle.textContent = `你赢得 ${formatNumber(selfAward.amount)} 筹码`;
     } else if (summary.awards.length === 1) {
       el.onlineResultTitle.textContent = `${summary.awards[0].name} 收下底池`;
+    } else if (!summary.awards.length && summary.carryPotOut > 0) {
+      el.onlineResultTitle.textContent = `平局，${formatNumber(
+        summary.carryPotOut
+      )} 筹码保留到下一手`;
     } else {
       el.onlineResultTitle.textContent = "本手结算";
     }
@@ -2040,7 +2521,7 @@
           .join("、");
         return `<div class="result-detail-line"><span>${
           pot.index === 0 ? "主池" : `边池 ${pot.index}`
-        } · ${escapeHtml(names)}</span><span>${formatNumber(
+        } · ${pot.carried ? "并列，结转下一手" : escapeHtml(names)}</span><span>${formatNumber(
           pot.amount
         )}</span></div>`;
       })
@@ -2059,6 +2540,9 @@
 
   function updateCountdown() {
     const room = state.room;
+    if (room?.game) {
+      renderRewind(room);
+    }
     if (!room?.game || room.game.phase !== "complete" || !room.nextHandAt) {
       el.onlineNextHint.textContent = room?.paused
         ? "自动续手已暂停，等待房主继续。"
@@ -2194,6 +2678,23 @@
     el.chatMessages.innerHTML = messages.length
       ? messages
           .map((message) => {
+            if (message.kind === "system") {
+              return `
+                <article class="chat-message chat-system-message">
+                  <div class="chat-message-body">
+                    <div class="chat-message-head">
+                      <strong>系统</strong>
+                      <time>${new Date(message.createdAt).toLocaleTimeString(
+                        "zh-CN",
+                        { hour: "2-digit", minute: "2-digit" }
+                      )}</time>
+                    </div>
+                    <div class="chat-message-text">${escapeHtml(
+                      message.text
+                    )}</div>
+                  </div>
+                </article>`;
+            }
             const sender = currentUserMap.get(message.userId) || {
               name: message.name,
               avatarUrl: message.avatarUrl
@@ -2300,6 +2801,7 @@
     state.mobileToolsOpen = false;
     el.mobileToolsButton.hidden = true;
     syncMobileDrawers();
+    el.rewindPanel.hidden = true;
     el.onlineTurnAlert.hidden = true;
     document.body.classList.remove("is-my-turn");
     if (document.title.startsWith("●")) {
@@ -2353,16 +2855,23 @@
       })
       .join("");
     const spectators = room.spectators;
-    el.spectatorCount.textContent = `${spectators.length} 人`;
-    el.spectatorList.innerHTML = spectators.length
-      ? spectators
+    const sidePeople = spectators.concat(room.rewinders || []);
+    el.spectatorCount.textContent = `${sidePeople.length} 人`;
+    el.spectatorList.innerHTML = sidePeople.length
+      ? sidePeople
           .map(
             (user) =>
               `<div class="spectator-item">${avatarMarkup(
                 user.avatarUrl
               )}<b>${escapeHtml(user.name)}${
                 user.isSelf ? "（你）" : ""
-              }</b><span>${user.connected ? "旁观中" : "离线"}</span></div>`
+              }</b><span>${
+                user.rewindEligible
+                  ? `${user.rewindStage}转回溯者`
+                  : user.connected
+                    ? "旁观中"
+                    : "离线"
+              }</span></div>`
           )
           .join("")
       : '<div class="spectator-item">暂无旁观者<span>—</span></div>';
@@ -2405,6 +2914,8 @@
     el.transferHostButton.disabled =
       !room.users.some((user) => user.id !== room.self.id && user.connected);
     renderChat();
+    renderVoice(room);
+    syncVoicePeers();
   }
 
   function renderGame() {
@@ -2417,11 +2928,15 @@
     renderProfile(room);
     renderGameSeats(game);
     renderGameCenter(game);
+    renderShuffleCeremony(game);
+    renderRewind(room);
     renderActionControls();
     renderResult(game);
     renderHostControls();
     renderEquity(game);
     renderChat();
+    renderVoice(room);
+    syncVoicePeers();
     renderOnlineTurnAlert();
     const remaining = game.players.filter((player) => !player.eliminated).length;
     el.onlineRemainingText.textContent = `剩余 ${remaining} 人`;
@@ -2622,6 +3137,9 @@
     el.renameForm.addEventListener("submit", submitRename);
     el.closeRenameButton.addEventListener("click", () => el.renameDialog.close());
     el.rulesButton.addEventListener("click", () => el.rulesDialog.showModal());
+    el.mobileRulesButton.addEventListener("click", () =>
+      el.rulesDialog.showModal()
+    );
     el.closeRulesButton.addEventListener("click", () => el.rulesDialog.close());
     el.mobileOpponentsToggle.addEventListener("click", () =>
       setOpponentDrawerOpen(!state.opponentDrawerOpen)
@@ -2642,8 +3160,27 @@
       setMobileToolsOpen(false)
     );
     el.leaveRoomButton.addEventListener("click", leaveRoom);
+    el.mobileLeaveButton.addEventListener("click", leaveRoom);
     el.onlineSoundToggle.addEventListener("click", toggleSoundPreference);
     el.onlineMotionToggle.addEventListener("click", toggleMotionPreference);
+    el.voiceButton.addEventListener("click", () => {
+      if (window.matchMedia("(max-width: 720px)").matches) {
+        setMobileToolsOpen(true);
+      }
+      el.voicePanel.scrollIntoView({
+        behavior: prefsMotion() ? "smooth" : "auto",
+        block: "center"
+      });
+    });
+    el.voiceJoinButton.addEventListener("click", joinVoice);
+    el.voiceMicButton.addEventListener("click", toggleVoiceMic);
+    el.voiceLeaveButton.addEventListener("click", () => leaveVoice(true));
+    el.voiceParticipants.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-voice-mute]");
+      if (button) {
+        toggleLocalVoiceMute(button.dataset.voiceMute);
+      }
+    });
     el.equityTab.addEventListener("click", () => setSocialTab("equity"));
     el.chatTab.addEventListener("click", () => setSocialTab("chat"));
     el.chatLocalMuteButton.addEventListener("click", toggleLocalChatMute);
@@ -2705,6 +3242,35 @@
         type: "host:chat:enable",
         enabled: !state.room.chat.enabled
       });
+    });
+    el.rewindRequestButton.addEventListener("click", () => {
+      const targetId = el.rewindTargetSelect.value;
+      if (targetId) {
+        sendMessage({ type: "rewind:select", targetId });
+      }
+    });
+    el.rewindSkipButton.addEventListener("click", () => {
+      sendMessage({ type: "rewind:select", targetId: null });
+    });
+    el.rewindAcceptButton.addEventListener("click", () => {
+      const request = state.room?.rewind?.incoming?.[0];
+      if (request) {
+        sendMessage({
+          type: "rewind:respond",
+          rewinderId: request.rewinderId,
+          accepted: true
+        });
+      }
+    });
+    el.rewindDeclineButton.addEventListener("click", () => {
+      const request = state.room?.rewind?.incoming?.[0];
+      if (request) {
+        sendMessage({
+          type: "rewind:respond",
+          rewinderId: request.rewinderId,
+          accepted: false
+        });
+      }
     });
     el.lobbyStartButton.addEventListener("click", () =>
       sendHostCommand(
@@ -2814,13 +3380,22 @@
     el.onlineAllInButton.addEventListener("click", () =>
       sendPlayerAction({ type: "all_in" })
     );
-    el.onlineRaiseButton.addEventListener("click", () =>
+    el.onlineRaiseButton.addEventListener("click", () => {
+      commitOnlineRaiseInput();
       sendPlayerAction({
         type: "raise",
         amount: Number(el.onlineRaiseSlider.value)
-      })
-    );
+      });
+    });
     el.onlineRaiseSlider.addEventListener("input", updateOnlineRaiseDisplay);
+    el.onlineRaiseInput.addEventListener("change", commitOnlineRaiseInput);
+    el.onlineRaiseInput.addEventListener("blur", commitOnlineRaiseInput);
+    el.onlineRaiseInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitOnlineRaiseInput();
+      }
+    });
     el.onlineQuickRaises.addEventListener("click", (event) => {
       const button = event.target.closest("[data-raise]");
       if (button) {
