@@ -7,6 +7,16 @@
   const AVATAR_KEY = "sanpi-online-avatar";
   const PREF_KEY = "sanpi-online-preferences";
   const HOST_TOKEN_KEY = "sanpi-online-host-token";
+  const QUICK_VOICE_FILES = Object.freeze({
+    hurry: "/assets/voice/quick-hurry.mp3",
+    call: "/assets/voice/quick-call.mp3",
+    think: "/assets/voice/quick-think.mp3",
+    nice: "/assets/voice/quick-nice.mp3",
+    close: "/assets/voice/quick-close.mp3",
+    friendly: "/assets/voice/quick-friendly.mp3",
+    again: "/assets/voice/quick-again.mp3",
+    wow: "/assets/voice/quick-wow.mp3"
+  });
   const PRESET_AVATARS = [
     { id: "jester", emoji: "🃏", color: "#70435f" },
     { id: "fox", emoji: "🦊", color: "#8d4d2f" },
@@ -89,6 +99,9 @@
     entryMode: "create",
     hostPortalMode: false,
     hostToken: null,
+    hostAuthorized: false,
+    opponentDrawerOpen: false,
+    mobileToolsOpen: false,
     countdownTimer: null,
     draftAvatars: {
       create: "preset:jester",
@@ -107,8 +120,10 @@
     lastChatMessageId: null,
     pendingChatBubble: null,
     lastTurnAlertSignature: "",
-    speechQueue: [],
-    speaking: false,
+    lastResultSignature: "",
+    voiceQueue: [],
+    voicePlaying: false,
+    voiceCache: new Map(),
     audioContext: null
   };
 
@@ -133,12 +148,7 @@
     "joinAvatarFile",
     "joinPresetAvatars",
     "entryError",
-    "hostPortalPanel",
-    "createHostLinkButton",
-    "hostLinkResult",
-    "hostLinkInput",
-    "copyHostLinkButton",
-    "hostLinkError",
+    "hostPrivatePanel",
     "roomScreen",
     "headerRoomCode",
     "connectionBadge",
@@ -148,6 +158,7 @@
     "onlineSoundToggle",
     "onlineMotionToggle",
     "rulesButton",
+    "mobileToolsButton",
     "leaveRoomButton",
     "lobbyArea",
     "lobbyLead",
@@ -171,6 +182,11 @@
     "transferHostButton",
     "onlineGameArea",
     "onlineTableShell",
+    "mobileOpponentsToggle",
+    "mobileOpponentSummary",
+    "mobileOpponentDetail",
+    "mobileOpponentsBackdrop",
+    "mobileOpponentCloseButton",
     "onlineTurnAlert",
     "onlineTurnAlertText",
     "onlineGoToActionButton",
@@ -229,6 +245,10 @@
     "applyNextSettingsButton",
     "onlineRemainingText",
     "onlineStakesText",
+    "onlineActionDock",
+    "onlineMoreTools",
+    "mobileToolsCloseButton",
+    "mobileToolsBackdrop",
     "equityTab",
     "chatTab",
     "chatUnreadBadge",
@@ -622,9 +642,7 @@
     if (document.title.startsWith("●")) {
       document.title = "三皮牌局 · 联机";
     }
-    el.createRoomPanel.hidden = mode !== "create";
-    el.joinRoomPanel.hidden = mode !== "join";
-    el.hostPortalPanel.hidden = !state.hostPortalMode;
+    refreshHostEntryVisibility();
     const preferredName = loadPreferredName();
     const preferredAvatar = loadPreferredAvatar();
     state.draftAvatars.create = preferredAvatar;
@@ -639,45 +657,21 @@
       }
     }
     renderAvatarPickers();
-    renderHostPortal();
     setEntryError(errorMessage || "");
   }
 
-  function renderHostPortal() {
-    if (!state.hostPortalMode) {
-      return;
-    }
-    const hasToken = Boolean(state.hostToken);
-    el.createHostLinkButton.hidden = hasToken;
-    el.hostLinkResult.hidden = !hasToken;
-    if (hasToken) {
-      el.hostLinkInput.value = `${location.origin}/host#owner=${state.hostToken}`;
-    }
-  }
-
-  async function generateHostLink() {
-    el.hostLinkError.hidden = true;
-    try {
-      const response = await fetch("/api/host-links", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}"
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || "生成房主链接失败。");
-      }
-      saveHostToken(payload.token);
-      renderHostPortal();
-      showToast("永久房主链接已生成");
-    } catch (error) {
-      el.hostLinkError.textContent = error.message;
-      el.hostLinkError.hidden = false;
-    }
+  function refreshHostEntryVisibility() {
+    const privateHost = state.hostPortalMode && !state.hostAuthorized;
+    el.hostPrivatePanel.hidden = !privateHost;
+    el.createRoomPanel.hidden =
+      state.entryMode !== "create" || privateHost;
+    el.joinRoomPanel.hidden = state.entryMode !== "join";
   }
 
   async function verifyHostToken() {
     if (!state.hostToken) {
+      state.hostAuthorized = false;
+      refreshHostEntryVisibility();
       return;
     }
     try {
@@ -689,11 +683,14 @@
       if (!response.ok) {
         state.hostToken = null;
         localStorage.removeItem(HOST_TOKEN_KEY);
+        state.hostAuthorized = false;
+      } else {
+        state.hostAuthorized = true;
       }
     } catch {
-      // The create request will validate the token again.
+      state.hostAuthorized = false;
     }
-    renderHostPortal();
+    refreshHostEntryVisibility();
   }
 
   function showRoom() {
@@ -718,7 +715,10 @@
         name,
         seatCap,
         avatar: state.draftAvatars.create,
-        ownerToken: state.hostToken || undefined
+        ownerToken:
+          state.hostPortalMode && state.hostAuthorized
+            ? state.hostToken
+            : undefined
       });
       saveSession(payload.roomCode, payload);
       rememberName(name);
@@ -838,6 +838,7 @@
         setConnection("connected", "已连接");
         showRoom();
         render();
+        playResultSoundForGame(state.room.game);
         flushChatBubble();
       } else if (message.type === "room:chat") {
         handleIncomingChat(message.message);
@@ -939,78 +940,212 @@
   }
 
   function playDealSound(slot) {
-    if (slot === "up") {
-      playTone(430, 0.05, 0.014, "triangle");
-    } else {
-      playTone(280, 0.045, 0.012, "triangle");
-    }
+    playNoiseBurst(0.038, slot === "up" ? 0.006 : 0.0045, 1500);
+    playTone(slot === "up" ? 520 : 350, 0.045, 0.011, "triangle");
   }
 
-  function playChatTone() {
-    playTone(680, 0.06, 0.012, "sine");
+  function playNoiseBurst(duration, volume, centerFrequency) {
+    const context = ensureAudioContext();
+    if (!context) {
+      return;
+    }
+    const frameCount = Math.ceil(context.sampleRate * duration);
+    const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let index = 0; index < frameCount; index += 1) {
+      data[index] = (Math.random() * 2 - 1) * (1 - index / frameCount);
+    }
+    const source = context.createBufferSource();
+    const filter = context.createBiquadFilter();
+    const gain = context.createGain();
+    filter.type = "bandpass";
+    filter.frequency.value = centerFrequency;
+    filter.Q.value = 0.7;
+    gain.gain.setValueAtTime(volume, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      context.currentTime + duration
+    );
+    source.buffer = buffer;
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(context.destination);
+    source.start();
+  }
+
+  function playChatTone(direction) {
+    if (direction === "send") {
+      playTone(760, 0.055, 0.011, "sine");
+      window.setTimeout(() => playTone(920, 0.045, 0.007, "sine"), 35);
+      return;
+    }
+    playTone(610, 0.07, 0.01, "sine");
+  }
+
+  function playActionSound(type) {
+    if (type === "fold") {
+      playNoiseBurst(0.12, 0.004, 900);
+      playTone(240, 0.1, 0.01, "triangle");
+      return;
+    }
+    if (type === "all_in") {
+      [0, 60, 120].forEach((delay, index) => {
+        window.setTimeout(
+          () => playTone(260 + index * 80, 0.1, 0.012, "triangle"),
+          delay
+        );
+      });
+      playNoiseBurst(0.18, 0.01, 700);
+      return;
+    }
+    playTone(type === "raise" ? 420 : 330, 0.055, 0.012, "triangle");
+    window.setTimeout(
+      () => playTone(type === "raise" ? 620 : 460, 0.07, 0.008, "triangle"),
+      45
+    );
+  }
+
+  function playResultSoundForGame(game) {
+    if (!game || game.phase !== "complete") {
+      return;
+    }
+    const signature = `${game.handNo}:${game.summary?.key || ""}:${game.summary?.winners?.join(",") || ""}`;
+    if (signature === state.lastResultSignature) {
+      return;
+    }
+    state.lastResultSignature = signature;
+    const selfIndex = findSelfGameIndex(game);
+    const isWinner = game.summary?.winners?.includes(selfIndex);
+    if (isWinner) {
+      [523, 659, 784, 1046].forEach((frequency, index) => {
+        window.setTimeout(
+          () => playTone(frequency, 0.13, 0.012, "sine"),
+          index * 75
+        );
+      });
+      return;
+    }
+    playTone(310, 0.13, 0.009, "sine");
+    window.setTimeout(() => playTone(233, 0.18, 0.007, "sine"), 80);
   }
 
   function playEmoteImpact(item) {
     if (item === "flower") {
-      playTone(780, 0.13, 0.012, "sine");
-      window.setTimeout(() => playTone(980, 0.1, 0.008, "sine"), 80);
+      [660, 880, 1100].forEach((frequency, index) => {
+        window.setTimeout(
+          () => playTone(frequency, 0.12, 0.009, "sine"),
+          index * 60
+        );
+      });
       return;
     }
-    playTone(item === "egg" ? 150 : 115, 0.09, 0.035, "square");
-    window.setTimeout(
-      () => playTone(item === "egg" ? 90 : 75, 0.12, 0.02, "triangle"),
-      50
-    );
+    if (item === "egg") {
+      playTone(155, 0.075, 0.028, "square");
+      playNoiseBurst(0.09, 0.018, 850);
+      window.setTimeout(() => playTone(82, 0.11, 0.016, "triangle"), 42);
+      return;
+    }
+    playTone(118, 0.08, 0.022, "sawtooth");
+    playNoiseBurst(0.13, 0.012, 480);
   }
 
-  function speakQuickPhrase(text) {
+  function speakQuickPhrase(phraseId, text) {
     if (
       !state.preferences.sound ||
-      state.preferences.localChatMuted ||
-      !("speechSynthesis" in window)
+      state.preferences.localChatMuted
     ) {
-      playChatTone();
       return;
     }
-    state.speechQueue.push(text);
-    if (state.speaking) {
+    state.voiceQueue.push({ phraseId, text });
+    if (state.voicePlaying) {
       return;
     }
-    const speakNext = () => {
-      const next = state.speechQueue.shift();
+    const playNext = () => {
+      const next = state.voiceQueue.shift();
       if (!next) {
-        state.speaking = false;
+        state.voicePlaying = false;
         return;
       }
-      state.speaking = true;
-      const utterance = new SpeechSynthesisUtterance(next);
-      utterance.lang = "zh-CN";
-      utterance.rate = 1.02;
-      utterance.pitch = 1;
-      const voices = window.speechSynthesis.getVoices();
-      const chinese = voices.find((voice) => /^zh|Chinese|中文/i.test(`${voice.lang} ${voice.name}`));
-      if (chinese) {
-        utterance.voice = chinese;
+      state.voicePlaying = true;
+      const source = QUICK_VOICE_FILES[next.phraseId];
+      if (!source) {
+        speakWithSystemVoice(next.text, playNext);
+        return;
       }
-      utterance.onend = speakNext;
-      utterance.onerror = () => {
-        playChatTone();
-        speakNext();
+      let audio = state.voiceCache.get(next.phraseId);
+      if (!audio) {
+        audio = new Audio(source);
+        audio.preload = "auto";
+        audio.volume = 0.82;
+        state.voiceCache.set(next.phraseId, audio);
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        audio.onended = null;
+        audio.onerror = null;
+        playNext();
       };
-      try {
-        window.speechSynthesis.speak(utterance);
-      } catch {
-        playChatTone();
-        speakNext();
-      }
+      audio.onended = finish;
+      audio.onerror = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        speakWithSystemVoice(next.text, playNext);
+      };
+      audio.currentTime = 0;
+      audio.play().catch(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        speakWithSystemVoice(next.text, playNext);
+      });
     };
-    speakNext();
+    playNext();
+  }
+
+  function speakWithSystemVoice(text, done) {
+    if (!("speechSynthesis" in window)) {
+      playChatTone("receive");
+      done();
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    utterance.rate = 1.05;
+    utterance.pitch = 1.08;
+    const chinese = window.speechSynthesis
+      .getVoices()
+      .find((voice) => /^zh|Chinese|中文/i.test(`${voice.lang} ${voice.name}`));
+    if (chinese) {
+      utterance.voice = chinese;
+    }
+    utterance.onend = done;
+    utterance.onerror = () => {
+      playChatTone("receive");
+      done();
+    };
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      playChatTone("receive");
+      done();
+    }
   }
 
   function handleIncomingChat(message) {
     if (!message) {
       return;
     }
+    if (message.id && message.id === state.lastChatMessageId) {
+      return;
+    }
+    state.lastChatMessageId = message.id || state.lastChatMessageId;
     const isSelf = message.userId === state.room?.self?.id;
     state.pendingChatBubble = {
       userId: message.userId,
@@ -1020,12 +1155,12 @@
           : message.text,
       createdAt: Date.now()
     };
-    if (!isSelf && message.kind === "quick") {
-      speakQuickPhrase(message.text);
-    } else if (!isSelf) {
-      playChatTone();
+    if (message.kind === "quick") {
+      speakQuickPhrase(message.phraseId, message.text);
+    } else {
+      playChatTone(isSelf ? "send" : "receive");
     }
-    if (state.activeSocialTab !== "chat") {
+    if (!isSelf && state.activeSocialTab !== "chat") {
       state.unreadChat += 1;
       renderChatUnread();
     }
@@ -1076,6 +1211,7 @@
       (player) => player.id === message.targetId
     );
     if (sourceIndex < 0 || targetIndex < 0) {
+      playEmoteImpact(message.item);
       return;
     }
     const sourceSelfIndex = findSelfGameIndex(game);
@@ -1091,10 +1227,15 @@
         ? document.querySelector(".human-hand-card")
         : null);
     if (!source || !target) {
+      playEmoteImpact(message.item);
       return;
     }
     const from = source.getBoundingClientRect();
     const to = target.getBoundingClientRect();
+    if (!from.width || !to.width) {
+      playEmoteImpact(message.item);
+      return;
+    }
     const item =
       message.item === "egg" ? "🥚" : message.item === "tomato" ? "🍅" : "🌹";
     const node = document.createElement("span");
@@ -1415,6 +1556,57 @@
       "is-large-table",
       opponents.length >= 7
     );
+    const foldedCount = opponents.filter((entry) => entry.player.folded).length;
+    const actor =
+      game.actorIndex === null || game.actorIndex === undefined
+        ? null
+        : game.players[game.actorIndex];
+    const actorLabel =
+      actor?.id === state.room?.self?.id
+        ? "轮到你行动"
+        : actor
+          ? `当前：${actor.name}`
+          : "等待行动";
+    el.mobileOpponentSummary.textContent = `对手 ${opponents.length}`;
+    el.mobileOpponentDetail.textContent = foldedCount
+      ? `${actorLabel} · ${foldedCount} 人已弃`
+      : actorLabel;
+    el.mobileOpponentsToggle.disabled = opponents.length === 0;
+    if (opponents.length === 0 && state.opponentDrawerOpen) {
+      setOpponentDrawerOpen(false);
+    } else {
+      syncMobileDrawers();
+    }
+  }
+
+  function setOpponentDrawerOpen(open) {
+    state.opponentDrawerOpen = Boolean(open);
+    syncMobileDrawers();
+  }
+
+  function setMobileToolsOpen(open) {
+    state.mobileToolsOpen = Boolean(open);
+    syncMobileDrawers();
+  }
+
+  function syncMobileDrawers() {
+    const opponentOpen =
+      state.opponentDrawerOpen && Boolean(state.room?.game);
+    const toolsOpen = state.mobileToolsOpen && Boolean(state.room?.game);
+    el.onlineTableShell.classList.toggle("opponents-open", opponentOpen);
+    el.onlineActionDock.classList.toggle("mobile-tools-open", toolsOpen);
+    document.body.classList.toggle(
+      "mobile-drawer-open",
+      opponentOpen || toolsOpen
+    );
+    el.mobileOpponentsToggle.setAttribute(
+      "aria-expanded",
+      String(opponentOpen)
+    );
+    el.mobileToolsButton.setAttribute("aria-expanded", String(toolsOpen));
+    el.mobileOpponentsBackdrop.hidden = !opponentOpen;
+    el.mobileOpponentCloseButton.hidden = !opponentOpen;
+    el.mobileToolsBackdrop.hidden = !toolsOpen;
   }
 
   function animatePresentationCard(game) {
@@ -1556,6 +1748,7 @@
     if (!state.room?.game || state.pendingAction) {
       return;
     }
+    playActionSound(action.type);
     const requestId =
       typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -2103,6 +2296,10 @@
 
   function renderLobby() {
     const room = state.room;
+    state.opponentDrawerOpen = false;
+    state.mobileToolsOpen = false;
+    el.mobileToolsButton.hidden = true;
+    syncMobileDrawers();
     el.onlineTurnAlert.hidden = true;
     document.body.classList.remove("is-my-turn");
     if (document.title.startsWith("●")) {
@@ -2215,6 +2412,7 @@
     const game = room.game;
     el.lobbyArea.hidden = true;
     el.onlineGameArea.hidden = false;
+    el.mobileToolsButton.hidden = false;
     el.headerRoomCode.textContent = room.code;
     renderProfile(room);
     renderGameSeats(game);
@@ -2262,20 +2460,6 @@
       showToast("邀请链接已复制");
     } catch {
       showToast(`邀请链接：${link}`);
-    }
-  }
-
-  async function copyHostLink() {
-    const link = el.hostLinkInput.value;
-    if (!link) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(link);
-      showToast("永久房主链接已复制");
-    } catch {
-      el.hostLinkInput.select();
-      showToast("请手动复制已选中的房主链接");
     }
   }
 
@@ -2409,8 +2593,6 @@
   function bindEvents() {
     el.createRoomForm?.addEventListener("submit", createRoom);
     el.joinRoomForm?.addEventListener("submit", joinRoom);
-    el.createHostLinkButton.addEventListener("click", generateHostLink);
-    el.copyHostLinkButton.addEventListener("click", copyHostLink);
     [
       ["create", el.createAvatarFile],
       ["join", el.joinAvatarFile],
@@ -2441,6 +2623,24 @@
     el.closeRenameButton.addEventListener("click", () => el.renameDialog.close());
     el.rulesButton.addEventListener("click", () => el.rulesDialog.showModal());
     el.closeRulesButton.addEventListener("click", () => el.rulesDialog.close());
+    el.mobileOpponentsToggle.addEventListener("click", () =>
+      setOpponentDrawerOpen(!state.opponentDrawerOpen)
+    );
+    el.mobileOpponentsBackdrop.addEventListener("click", () =>
+      setOpponentDrawerOpen(false)
+    );
+    el.mobileOpponentCloseButton.addEventListener("click", () =>
+      setOpponentDrawerOpen(false)
+    );
+    el.mobileToolsButton.addEventListener("click", () =>
+      setMobileToolsOpen(!state.mobileToolsOpen)
+    );
+    el.mobileToolsBackdrop.addEventListener("click", () =>
+      setMobileToolsOpen(false)
+    );
+    el.mobileToolsCloseButton.addEventListener("click", () =>
+      setMobileToolsOpen(false)
+    );
     el.leaveRoomButton.addEventListener("click", leaveRoom);
     el.onlineSoundToggle.addEventListener("click", toggleSoundPreference);
     el.onlineMotionToggle.addEventListener("click", toggleMotionPreference);
@@ -2633,6 +2833,17 @@
           dialog.close();
         }
       });
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (state.opponentDrawerOpen) {
+        setOpponentDrawerOpen(false);
+      }
+      if (state.mobileToolsOpen) {
+        setMobileToolsOpen(false);
+      }
     });
   }
 

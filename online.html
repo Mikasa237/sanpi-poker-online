@@ -43,20 +43,10 @@
           </div>
 
           <div class="entry-card">
-            <div id="hostPortalPanel" class="host-portal-panel" hidden>
-              <p class="section-kicker">永久房主入口</p>
-              <h2>保存一次，随时开房</h2>
-              <p>这个链接不依赖你的电脑开机。以后直接从它进入并创建新房间。</p>
-              <button id="createHostLinkButton" class="secondary-button" type="button">
-                生成永久房主链接
-              </button>
-              <div id="hostLinkResult" class="host-link-result" hidden>
-                <input id="hostLinkInput" readonly />
-                <button id="copyHostLinkButton" class="primary-button" type="button">
-                  复制房主链接
-                </button>
-              </div>
-              <p id="hostLinkError" class="entry-error" role="alert" hidden></p>
+            <div id="hostPrivatePanel" class="host-private-panel" hidden>
+              <p class="section-kicker">私密房主入口</p>
+              <h2>需要使用已保存的房主链接</h2>
+              <p>普通联机地址和房间邀请链接不能创建或显示永久房主凭证。</p>
             </div>
             <div id="createRoomPanel">
               <p class="section-kicker">创建联机房</p>
@@ -140,7 +130,6 @@
             <p class="entry-note">
               房间没有密码。任何拿到链接的人都能申请加入，同一个房间内昵称不能重复。
             </p>
-            <a class="back-link host-entry-link" href="/host">永久房主入口 →</a>
           </div>
         </div>
       </section>
@@ -164,6 +153,9 @@
             <button id="onlineSoundToggle" class="icon-button" type="button" aria-pressed="true" title="声音开关">♪</button>
             <button id="onlineMotionToggle" class="icon-button" type="button" aria-pressed="true" title="动画开关">◌</button>
             <button id="rulesButton" class="ghost-button" type="button">规则</button>
+            <button id="mobileToolsButton" class="ghost-button mobile-tools-button" type="button" aria-expanded="false" aria-controls="onlineMoreTools">
+              工具
+            </button>
             <button id="leaveRoomButton" class="ghost-button danger-ghost" type="button">
               离开
             </button>
@@ -253,6 +245,35 @@
               <div class="felt-line felt-line-one" aria-hidden="true"></div>
               <div class="felt-line felt-line-two" aria-hidden="true"></div>
             </div>
+            <button
+              id="mobileOpponentsToggle"
+              class="mobile-opponents-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="onlineSeatLayer"
+            >
+              <span class="mobile-opponents-icon" aria-hidden="true">♠</span>
+              <span>
+                <strong id="mobileOpponentSummary">对手 0</strong>
+                <small id="mobileOpponentDetail">点击查看牌面</small>
+              </span>
+              <i aria-hidden="true">展开</i>
+            </button>
+            <button
+              id="mobileOpponentsBackdrop"
+              class="mobile-drawer-backdrop opponent-backdrop"
+              type="button"
+              aria-label="收起对手牌面"
+              hidden
+            ></button>
+            <button
+              id="mobileOpponentCloseButton"
+              class="mobile-drawer-close"
+              type="button"
+              hidden
+            >
+              收起对手
+            </button>
             <div id="onlineSeatLayer" class="seat-layer"></div>
             <section id="onlineHumanHandZone" class="human-hand-zone" aria-label="你的手牌"></section>
             <div id="spectatorNotice" class="spectator-notice" hidden>
@@ -279,14 +300,14 @@
               <p id="onlineTableHint" class="table-hint">等待房主开始</p>
               <div id="onlineMiniLog" class="mini-log"></div>
             </div>
+          </section>
+
+          <aside id="onlineActionDock" class="action-dock online-action-dock">
             <div id="onlineTurnAlert" class="turn-alert" hidden role="status" aria-live="assertive">
               <strong>轮到你行动</strong>
               <span id="onlineTurnAlertText">请选择本回合操作</span>
               <button id="onlineGoToActionButton" type="button">去操作</button>
             </div>
-          </section>
-
-          <aside class="action-dock online-action-dock">
             <section id="onlineTurnPanel" class="turn-panel">
               <div class="turn-copy">
                 <span id="onlineTurnEyebrow" class="section-kicker">联机牌桌</span>
@@ -363,100 +384,111 @@
               </details>
             </section>
 
-            <section id="hostControls" class="host-controls online-host-controls">
-              <p class="section-kicker">房主控制</p>
-              <div class="host-control-row">
-                <button id="hostPauseButton" class="secondary-button" type="button">暂停续手</button>
-                <button id="hostResumeButton" class="secondary-button" type="button" hidden>继续续手</button>
-                <button id="hostStartNowButton" class="primary-button" type="button" hidden>立即开始下一手</button>
-                <button id="hostRestartButton" class="primary-button" type="button" hidden>开始新一局</button>
-              </div>
-              <label class="online-field compact-field">
-                <span>移座或转让房主</span>
-                <select id="hostTargetSelect"></select>
-              </label>
-              <div class="host-target-actions">
-                <button id="hostRemoveButton" class="secondary-button" type="button">本手结束后移座</button>
-                <button id="hostTransferButton" class="secondary-button" type="button">转让房主</button>
-              </div>
-              <div id="nextMatchSettings" class="stake-settings" hidden>
+            <section id="onlineMoreTools" class="online-more-tools">
+              <header class="mobile-tools-header">
+                <div>
+                  <span class="section-kicker">牌桌工具</span>
+                  <strong>牌力、聊天与房主管理</strong>
+                </div>
+                <button id="mobileToolsCloseButton" class="icon-button" type="button" aria-label="关闭工具">×</button>
+              </header>
+
+              <section id="hostControls" class="host-controls online-host-controls">
+                <p class="section-kicker">房主控制</p>
+                <div class="host-control-row">
+                  <button id="hostPauseButton" class="secondary-button" type="button">暂停续手</button>
+                  <button id="hostResumeButton" class="secondary-button" type="button" hidden>继续续手</button>
+                  <button id="hostStartNowButton" class="primary-button" type="button" hidden>立即开始下一手</button>
+                  <button id="hostRestartButton" class="primary-button" type="button" hidden>开始新一局</button>
+                </div>
                 <label class="online-field compact-field">
-                  <span>下一局每人本钱</span>
-                  <input id="nextStartingChipsInput" type="number" min="100" max="100000" step="100" value="1000" />
+                  <span>移座或转让房主</span>
+                  <select id="hostTargetSelect"></select>
                 </label>
-                <label class="online-field compact-field">
-                  <span>下一局底注</span>
-                  <input id="nextAnteInput" type="number" min="5" max="100" step="5" value="10" />
-                </label>
-                <label class="online-field compact-field">
-                  <span>下一局单注封顶</span>
-                  <input id="nextBetCapInput" type="number" min="0" max="100000" step="10" value="0" />
-                </label>
-                <button id="applyNextSettingsButton" class="secondary-button" type="button">
-                  保存下一局设置
-                </button>
+                <div class="host-target-actions">
+                  <button id="hostRemoveButton" class="secondary-button" type="button">本手结束后移座</button>
+                  <button id="hostTransferButton" class="secondary-button" type="button">转让房主</button>
+                </div>
+                <div id="nextMatchSettings" class="stake-settings" hidden>
+                  <label class="online-field compact-field">
+                    <span>下一局每人本钱</span>
+                    <input id="nextStartingChipsInput" type="number" min="100" max="100000" step="100" value="1000" />
+                  </label>
+                  <label class="online-field compact-field">
+                    <span>下一局底注</span>
+                    <input id="nextAnteInput" type="number" min="5" max="100" step="5" value="10" />
+                  </label>
+                  <label class="online-field compact-field">
+                    <span>下一局单注封顶</span>
+                    <input id="nextBetCapInput" type="number" min="0" max="100000" step="10" value="0" />
+                  </label>
+                  <button id="applyNextSettingsButton" class="secondary-button" type="button">
+                    保存下一局设置
+                  </button>
+                </div>
+              </section>
+
+              <section class="social-dock">
+                <div class="social-tabs" role="tablist" aria-label="牌桌附加功能">
+                  <button id="equityTab" class="social-tab is-active" type="button" role="tab" aria-selected="true">
+                    牌力图
+                  </button>
+                  <button id="chatTab" class="social-tab" type="button" role="tab" aria-selected="false">
+                    公共聊天
+                    <span id="chatUnreadBadge" class="chat-unread" hidden>0</span>
+                  </button>
+                </div>
+
+                <div id="equityPanel" class="social-panel">
+                  <div class="equity-heading">
+                    <div>
+                      <span>当前手牌</span>
+                      <strong id="equityHandLabel">等待发牌</strong>
+                    </div>
+                    <span id="equitySample" class="equity-sample">基于公开信息估算</span>
+                  </div>
+                  <div id="equityBars" class="equity-bars"></div>
+                  <p class="equity-note">赢面为胜率加平局分池份额，不包含下注策略，也不会读取对手暗牌。</p>
+                </div>
+
+                <div id="chatPanel" class="social-panel" hidden>
+                  <div id="chatDisabledNotice" class="chat-disabled-notice" hidden>房主已关闭聊天和互动。</div>
+                  <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
+                  <div id="quickPhraseBar" class="quick-phrase-bar"></div>
+                  <div class="emote-row">
+                    <select id="emoteTarget" aria-label="投掷目标"></select>
+                    <button type="button" class="emote-button" data-emote="egg">🥚 鸡蛋</button>
+                    <button type="button" class="emote-button" data-emote="tomato">🍅 番茄</button>
+                    <button type="button" class="emote-button" data-emote="flower">🌹 鲜花</button>
+                  </div>
+                  <form id="chatForm" class="chat-form">
+                    <input id="chatInput" maxlength="60" placeholder="说点什么…" autocomplete="off" />
+                    <button id="chatSendButton" class="primary-button" type="submit">发送</button>
+                  </form>
+                  <div class="chat-footer">
+                    <button id="chatLocalMuteButton" class="text-button" type="button">本地静音</button>
+                    <span id="chatStatusText">最近 50 条消息仅在本房间保留</span>
+                  </div>
+                  <div id="hostChatControls" class="host-chat-controls" hidden>
+                    <span class="section-kicker">房主聊天管理</span>
+                    <div class="host-target-actions">
+                      <select id="chatModerationTarget" aria-label="聊天管理目标"></select>
+                      <button id="hostMuteButton" class="secondary-button" type="button">禁言</button>
+                      <button id="hostUnmuteButton" class="secondary-button" type="button">解除禁言</button>
+                      <button id="hostClearChatButton" class="secondary-button" type="button">清空聊天</button>
+                      <button id="hostToggleChatButton" class="secondary-button" type="button">关闭聊天</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <div class="hand-footnote">
+                <span id="onlineStakesText">底注 10 · 单注封顶 无上限</span>
+                <span>房主可以手动处理掉线玩家</span>
+                <span id="onlineRemainingText">剩余 0 人</span>
               </div>
             </section>
-
-            <section class="social-dock">
-              <div class="social-tabs" role="tablist" aria-label="牌桌附加功能">
-                <button id="equityTab" class="social-tab is-active" type="button" role="tab" aria-selected="true">
-                  牌力图
-                </button>
-                <button id="chatTab" class="social-tab" type="button" role="tab" aria-selected="false">
-                  公共聊天
-                  <span id="chatUnreadBadge" class="chat-unread" hidden>0</span>
-                </button>
-              </div>
-
-              <div id="equityPanel" class="social-panel">
-                <div class="equity-heading">
-                  <div>
-                    <span>当前手牌</span>
-                    <strong id="equityHandLabel">等待发牌</strong>
-                  </div>
-                  <span id="equitySample" class="equity-sample">基于公开信息估算</span>
-                </div>
-                <div id="equityBars" class="equity-bars"></div>
-                <p class="equity-note">赢面为胜率加平局分池份额，不包含下注策略，也不会读取对手暗牌。</p>
-              </div>
-
-              <div id="chatPanel" class="social-panel" hidden>
-                <div id="chatDisabledNotice" class="chat-disabled-notice" hidden>房主已关闭聊天和互动。</div>
-                <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
-                <div id="quickPhraseBar" class="quick-phrase-bar"></div>
-                <div class="emote-row">
-                  <select id="emoteTarget" aria-label="投掷目标"></select>
-                  <button type="button" class="emote-button" data-emote="egg">🥚 鸡蛋</button>
-                  <button type="button" class="emote-button" data-emote="tomato">🍅 番茄</button>
-                  <button type="button" class="emote-button" data-emote="flower">🌹 鲜花</button>
-                </div>
-                <form id="chatForm" class="chat-form">
-                  <input id="chatInput" maxlength="60" placeholder="说点什么…" autocomplete="off" />
-                  <button id="chatSendButton" class="primary-button" type="submit">发送</button>
-                </form>
-                <div class="chat-footer">
-                  <button id="chatLocalMuteButton" class="text-button" type="button">本地静音</button>
-                  <span id="chatStatusText">最近 50 条消息仅在本房间保留</span>
-                </div>
-                <div id="hostChatControls" class="host-chat-controls" hidden>
-                  <span class="section-kicker">房主聊天管理</span>
-                  <div class="host-target-actions">
-                    <select id="chatModerationTarget" aria-label="聊天管理目标"></select>
-                    <button id="hostMuteButton" class="secondary-button" type="button">禁言</button>
-                    <button id="hostUnmuteButton" class="secondary-button" type="button">解除禁言</button>
-                    <button id="hostClearChatButton" class="secondary-button" type="button">清空聊天</button>
-                    <button id="hostToggleChatButton" class="secondary-button" type="button">关闭聊天</button>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <div class="hand-footnote">
-              <span id="onlineStakesText">底注 10 · 单注封顶 无上限</span>
-              <span>房主可以手动处理掉线玩家</span>
-              <span id="onlineRemainingText">剩余 0 人</span>
-            </div>
+            <button id="mobileToolsBackdrop" class="mobile-drawer-backdrop tools-backdrop" type="button" aria-label="关闭牌桌工具" hidden></button>
           </aside>
         </section>
       </section>

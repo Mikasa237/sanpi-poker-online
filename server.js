@@ -20,6 +20,7 @@ const MAX_AVATAR_BODY_BYTES = 512 * 1024;
 const MAX_STORED_AVATAR_BYTES = 192 * 1024;
 const TOKEN_SECRET =
   process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+const HOST_ISSUE_SECRET = process.env.HOST_ISSUE_SECRET || "";
 const PUBLIC_FILES = new Set([
   "/index.html",
   "/online.html",
@@ -30,7 +31,15 @@ const PUBLIC_FILES = new Set([
   "/online.js",
   "/assets/joker-color.svg",
   "/assets/joker-mono.svg",
-  "/assets/wildcard.svg"
+  "/assets/wildcard.svg",
+  "/assets/voice/quick-hurry.mp3",
+  "/assets/voice/quick-call.mp3",
+  "/assets/voice/quick-think.mp3",
+  "/assets/voice/quick-nice.mp3",
+  "/assets/voice/quick-close.mp3",
+  "/assets/voice/quick-friendly.mp3",
+  "/assets/voice/quick-again.mp3",
+  "/assets/voice/quick-wow.mp3"
 ]);
 
 const MIME_TYPES = {
@@ -38,6 +47,7 @@ const MIME_TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
+  ".mp3": "audio/mpeg",
   ".png": "image/png",
   ".ico": "image/x-icon",
   ".json": "application/json; charset=utf-8"
@@ -172,6 +182,18 @@ function verifyHostToken(token) {
   } catch {
     return null;
   }
+}
+
+function verifyHostIssueSecret(value) {
+  if (!HOST_ISSUE_SECRET || typeof value !== "string") {
+    return false;
+  }
+  const expected = Buffer.from(HOST_ISSUE_SECRET);
+  const supplied = Buffer.from(value);
+  return (
+    expected.length === supplied.length &&
+    crypto.timingSafeEqual(expected, supplied)
+  );
 }
 
 function normalizeName(value) {
@@ -1080,6 +1102,7 @@ function createGameServer(options = {}) {
       id: nextChatId(room),
       kind,
       text,
+      ...(kind === "quick" ? { phraseId: message.phraseId } : {}),
       userId: participant.id,
       name: participant.name,
       avatarUrl: participant.avatarUrl,
@@ -1639,6 +1662,9 @@ function createGameServer(options = {}) {
         request.method === "POST" &&
         requestUrl.pathname === "/api/host-links"
       ) {
+        if (!verifyHostIssueSecret(request.headers["x-host-issue-secret"])) {
+          throw new RequestError(401, "房主链接维护接口未授权。");
+        }
         if (!allowRequest(request, "host-link", 6, 60_000)) {
           throw new RequestError(429, "操作过于频繁，请稍后再试。");
         }
