@@ -101,6 +101,7 @@
     "raiseLabel",
     "raiseValue",
     "raiseSlider",
+    "raiseInput",
     "raiseButton",
     "quickRaises",
     "foldButton",
@@ -431,7 +432,7 @@
       offset >= 0 ? alive.slice(offset).concat(alive.slice(0, offset)) : alive;
     localPresentation = {
       kind: "draw",
-      stage: "discard",
+      stage: game.midHandReshuffle ? "reshuffle" : "discard",
       order,
       index: -1,
       hole: game.players.map((player) => player.seat),
@@ -440,11 +441,16 @@
       last: null
     };
     renderAll();
+    if (game.midHandReshuffle) {
+      el.deckPile.classList.add("ritual-shuffle");
+      playSound("shuffle");
+    }
     localPresentationDelay(() => {
+      el.deckPile.classList.remove("ritual-shuffle");
       localPresentation.stage = "draw";
       renderAll();
       revealDraw();
-    }, 450);
+    }, game.midHandReshuffle ? 900 : 450);
     const revealDraw = () => {
       localPresentation.index += 1;
       if (localPresentation.index < order.length) {
@@ -817,9 +823,11 @@
           : localPresentation.stage === "up"
             ? "正在发明牌"
             : "正在确定先手"
-        : localPresentation.stage === "discard"
-          ? "正在暗弃"
-          : "正在摸牌";
+        : localPresentation.stage === "reshuffle"
+          ? "正在重新洗牌"
+          : localPresentation.stage === "discard"
+            ? "正在暗弃"
+            : "正在摸牌";
     }
     if (game.tableOver) {
       return "本局结束";
@@ -838,7 +846,9 @@
             game.reshuffledThisHand
             ? "剩余牌堆不足，正在收回 94 张牌统一重洗。"
             : "牌正从牌堆发往每位玩家。"
-          : "第三张牌正在依次公开。";
+          : localPresentation.stage === "reshuffle"
+            ? "第一轮出现加注，正在庄重地重新洗牌。"
+            : "第三张牌正在依次公开。";
     } else if (game.phase === "complete") {
       return "本手结束";
     }
@@ -852,7 +862,7 @@
     const actor = Engine.currentActor(game);
     el.phaseText.textContent = phaseText();
     el.phaseDot.classList.toggle("is-complete", game.phase === "complete");
-    el.potAmount.textContent = formatNumber(Engine.roundPot(game.players));
+    el.potAmount.textContent = formatNumber(Engine.totalPot(game));
     el.deckCount.textContent = `${game.deck.length} 张`;
     el.discardPile.classList.toggle("has-card", Boolean(game.discardCard));
     el.discardPile.setAttribute(
@@ -1014,7 +1024,7 @@
     const legal = Engine.getLegalActions(game, 0);
     const player = game.players[0];
     const need = Math.max(0, game.currentBet - player.roundContribution);
-    const pot = Engine.roundPot(game.players);
+    const pot = Engine.totalPot(game);
     const callAmount = legal.call ? legal.call.amount : need;
     el.callNeed.textContent = formatNumber(callAmount);
     el.currentBet.textContent = formatNumber(game.currentBet);
@@ -1043,6 +1053,9 @@
       slider.min = String(legal.raise.min);
       slider.max = String(legal.raise.max);
       slider.step = String(legal.raise.step);
+        el.raiseInput.min = String(legal.raise.min);
+        el.raiseInput.max = String(legal.raise.max);
+        el.raiseInput.step = String(legal.raise.step);
       const current = Number(slider.value);
       const clamped = Number.isFinite(current)
         ? clamp(current, legal.raise.min, legal.raise.max)
@@ -1056,6 +1069,9 @@
       } else {
         slider.value = String(clamped);
       }
+      if (document.activeElement !== el.raiseInput) {
+        el.raiseInput.value = slider.value;
+      }
       el.raiseLabel.textContent = `${legal.raise.label}到`;
       el.raiseButton.textContent = legal.raise.label;
       updateRaiseDisplay();
@@ -1065,6 +1081,23 @@
   function updateRaiseDisplay() {
     const value = Number(el.raiseSlider.value);
     el.raiseValue.textContent = formatNumber(value);
+    if (document.activeElement !== el.raiseInput) {
+      el.raiseInput.value = el.raiseSlider.value;
+    }
+  }
+
+  function commitRaiseInput() {
+    const slider = el.raiseSlider;
+    const min = Number(slider.min);
+    const max = Number(slider.max);
+    const step = Math.max(1, Number(slider.step) || 1);
+    const raw = Number(el.raiseInput.value);
+    const safe = Number.isFinite(raw) ? raw : min;
+    slider.value = String(
+      clamp(roundToStep(clamp(safe, min, max), step), min, max)
+    );
+    el.raiseInput.value = slider.value;
+    updateRaiseDisplay();
   }
 
   function setRaisePreset(kind) {
@@ -1073,7 +1106,7 @@
       return;
     }
     const step = legal.raise.step;
-    const pot = Engine.roundPot(game.players);
+    const pot = Engine.totalPot(game);
     const player = game.players[0];
     const need = Math.max(0, game.currentBet - player.roundContribution);
     let value = legal.raise.min;
@@ -1163,6 +1196,10 @@
       el.resultTitle.textContent = `你赢得 ${formatNumber(humanAward.amount)} 筹码`;
     } else if (summary.awards.length === 1) {
       el.resultTitle.textContent = `${summary.awards[0].name} 收下底池`;
+    } else if (!summary.awards.length && summary.carryPotOut > 0) {
+      el.resultTitle.textContent = `平局，${formatNumber(
+        summary.carryPotOut
+      )} 筹码保留到下一手`;
     } else {
       el.resultTitle.textContent = "底池已按边池结算";
     }
@@ -1199,7 +1236,7 @@
           .join("、");
         return `<div class="result-detail-line"><span>${
           pot.index === 0 ? "主池" : `边池 ${pot.index}`
-        } · ${escapeHtml(winnerNames)}</span><span>${formatNumber(
+        } · ${pot.carried ? "并列，结转下一手" : escapeHtml(winnerNames)}</span><span>${formatNumber(
           pot.amount
         )}</span></div>`;
       })
@@ -1467,6 +1504,13 @@
     if (kind === "deal") {
       playTone(240, 0.055, 0.018, "triangle");
       window.setTimeout(() => playTone(320, 0.055, 0.015, "triangle"), 75);
+    } else if (kind === "shuffle") {
+      [0, 120, 240, 360].forEach((delay, index) => {
+        window.setTimeout(
+          () => playTone(180 + index * 70, 0.1, 0.012, "triangle"),
+          delay
+        );
+      });
     } else if (kind === "chip") {
       playTone(620, 0.045, 0.017, "square");
       window.setTimeout(() => playTone(520, 0.035, 0.012, "square"), 38);
@@ -1653,12 +1697,21 @@
       performHumanAction({ type: "all_in" });
     });
     el.raiseButton.addEventListener("click", () => {
+      commitRaiseInput();
       performHumanAction({
         type: "raise",
         amount: Number(el.raiseSlider.value)
       });
     });
     el.raiseSlider.addEventListener("input", updateRaiseDisplay);
+    el.raiseInput.addEventListener("change", commitRaiseInput);
+    el.raiseInput.addEventListener("blur", commitRaiseInput);
+    el.raiseInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitRaiseInput();
+      }
+    });
     el.quickRaises.addEventListener("click", (event) => {
       const button = event.target.closest("[data-raise]");
       if (button) {

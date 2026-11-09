@@ -1223,6 +1223,26 @@ button:disabled {
     0 0 32px rgba(215, 170, 87, 0.14);
 }
 
+.mini-deck.ritual-shuffle {
+  animation: localRitualShuffle 900ms ease-in-out;
+}
+
+@keyframes localRitualShuffle {
+  0%,
+  100% {
+    transform: rotate(0) scale(1);
+  }
+  25% {
+    transform: translateX(-10px) rotate(-9deg) scale(1.06);
+  }
+  50% {
+    transform: translateX(10px) rotate(9deg) scale(0.94);
+  }
+  75% {
+    transform: translateX(-5px) rotate(-4deg) scale(1.04);
+  }
+}
+
 .human-hand-card.is-folded {
   opacity: 0.67;
 }
@@ -1751,9 +1771,21 @@ body.is-my-turn .table-shell {
 
 .slider-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 11px;
+}
+
+.raise-number-input {
+  width: 78px;
+  min-height: 40px;
+  padding: 6px 8px;
+  color: var(--gold-bright);
+  font-weight: 800;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.24);
 }
 
 input[type="range"] {

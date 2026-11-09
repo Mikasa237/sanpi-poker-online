@@ -153,6 +153,7 @@
             <button id="onlineSoundToggle" class="icon-button" type="button" aria-pressed="true" title="声音开关">♪</button>
             <button id="onlineMotionToggle" class="icon-button" type="button" aria-pressed="true" title="动画开关">◌</button>
             <button id="rulesButton" class="ghost-button" type="button">规则</button>
+            <button id="voiceButton" class="ghost-button" type="button" aria-expanded="false" aria-controls="voicePanel">语音</button>
             <button id="mobileToolsButton" class="ghost-button mobile-tools-button" type="button" aria-expanded="false" aria-controls="onlineMoreTools">
               工具
             </button>
@@ -245,6 +246,9 @@
               <div class="felt-line felt-line-one" aria-hidden="true"></div>
               <div class="felt-line felt-line-two" aria-hidden="true"></div>
             </div>
+            <div id="onlineShuffleCeremony" class="shuffle-ceremony" hidden aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
             <button
               id="mobileOpponentsToggle"
               class="mobile-opponents-toggle"
@@ -308,6 +312,27 @@
               <span id="onlineTurnAlertText">请选择本回合操作</span>
               <button id="onlineGoToActionButton" type="button">去操作</button>
             </div>
+            <section id="rewindPanel" class="rewind-panel" hidden aria-live="polite">
+              <div class="rewind-panel-heading">
+                <div>
+                  <span class="section-kicker">回溯阶段</span>
+                  <strong id="rewindTitle">选择一名玩家查看底牌</strong>
+                </div>
+                <span id="rewindCountdown" class="rewind-countdown">10s</span>
+              </div>
+              <p id="rewindDescription">对方同意后，仅你可看到其本手底牌。</p>
+              <div id="rewindSelectArea" class="rewind-actions">
+                <select id="rewindTargetSelect" aria-label="回溯查看目标"></select>
+                <button id="rewindRequestButton" class="secondary-button" type="button">请求查看</button>
+                <button id="rewindSkipButton" class="text-button" type="button">本手不回溯</button>
+              </div>
+              <div id="rewindIncomingArea" class="rewind-incoming" hidden>
+                <p id="rewindIncomingText"></p>
+                <button id="rewindAcceptButton" class="primary-button" type="button">同意查看</button>
+                <button id="rewindDeclineButton" class="secondary-button" type="button">拒绝</button>
+              </div>
+              <div id="rewindViewNotice" class="rewind-view-notice" hidden></div>
+            </section>
             <section id="onlineTurnPanel" class="turn-panel">
               <div class="turn-copy">
                 <span id="onlineTurnEyebrow" class="section-kicker">联机牌桌</span>
@@ -338,6 +363,7 @@
                 </label>
                 <div class="slider-row">
                   <input id="onlineRaiseSlider" type="range" min="10" max="10" step="10" value="10" />
+                  <input id="onlineRaiseInput" class="raise-number-input" type="number" inputmode="numeric" min="10" max="10" step="10" value="10" aria-label="手动输入下注金额" />
                   <button id="onlineRaiseButton" class="primary-button" type="button">下注</button>
                 </div>
                 <div id="onlineQuickRaises" class="quick-raises">
@@ -389,9 +415,29 @@
                 <div>
                   <span class="section-kicker">牌桌工具</span>
                   <strong>牌力、聊天与房主管理</strong>
+                  <div class="mobile-tools-quick-actions">
+                    <button id="mobileRulesButton" class="text-button" type="button">规则</button>
+                    <button id="mobileLeaveButton" class="text-button danger-text" type="button">离开房间</button>
+                  </div>
                 </div>
                 <button id="mobileToolsCloseButton" class="icon-button" type="button" aria-label="关闭工具">×</button>
               </header>
+
+              <section id="voicePanel" class="voice-panel" hidden aria-live="polite">
+                <div class="voice-panel-heading">
+                  <div>
+                    <span class="section-kicker">实时语音</span>
+                    <strong id="voiceStatusText">未加入语音</strong>
+                  </div>
+                  <button id="voiceJoinButton" class="primary-button" type="button">加入语音</button>
+                </div>
+                <div class="voice-actions">
+                  <button id="voiceMicButton" class="secondary-button" type="button" hidden>关闭麦克风</button>
+                  <button id="voiceLeaveButton" class="secondary-button" type="button" hidden>退出语音</button>
+                </div>
+                <div id="voiceParticipants" class="voice-participants"></div>
+                <p id="voiceError" class="entry-error" role="alert" hidden></p>
+              </section>
 
               <section id="hostControls" class="host-controls online-host-controls">
                 <p class="section-kicker">房主控制</p>
@@ -538,6 +584,10 @@
           <section><h3>牌组与点数</h3><p>两副牌共 94 张。5–10 按面值，J=11、Q=12、K=13、A=14、2=15；黑白 JOKER=16、彩色 JOKER=17、赖子=18。</p></section>
           <section><h3>每手流程</h3><p>每人先下房主设置的底注，获得一张暗牌和一张明牌。赖子不参与先手争夺，由其余明牌最大者先下注；若明牌都是赖子，则由庄家下一位先手。</p></section>
           <section><h3>普通牌与三皮</h3><p>普通牌比较三张点数和。三皮等级为三张自然相同 &gt; 两张相同加赖子 &gt; 一张加两张赖子；同一等级中目标点数越小越大。</p></section>
+          <section><h3>先手与同分</h3><p>第三张牌摸完后，由第三张牌点数最大的非赖子玩家先下注；花色只用于争夺先手，不参与最终结算。最终只比较点数和或三皮，完全同分时底池保留到下一手。</p></section>
+          <section><h3>累加底池</h3><p>平局时当前底池进入累计底池。下一手按正常规则重新发牌和下注，唯一总赢家获得当前底池与全部累计底池，随后累计底池清零。</p></section>
+          <section><h3>回溯者</h3><p>筹码耗尽后会保留原座并成为 1–3 转回溯者。每手发牌后可请求查看一名在座玩家的底牌，对方同意后才能查看；若该目标成为唯一赢家，回溯者获得一半初始本钱并复活。最多复活三次。</p></section>
+          <section><h3>语音与重洗</h3><p>在座玩家和回溯者可自由加入实时语音，并可在本地单独静音其他玩家。第一轮出现加注时，剩余牌堆会真实重洗，并播放庄重洗牌动画和音效后再发第三张牌。</p></section>
           <section><h3>联机淘汰</h3><p>筹码归零后自动离开座位并成为旁观者。不会补筹码。最后一名有筹码的玩家赢下整桌。</p></section>
           <section><h3>开局设置</h3><p>房主可在开局前设置底注和单注封顶。底注同时是最小下注和最小加注单位；单注封顶限制一笔下注或加注的最高目标额度，0 表示无上限。牌局进行中锁定，下一局开始前可重新调整。</p></section>
           <section><h3>掉线与房主</h3><p>掉线不自动弃牌。房主确认后可以跳过卡住的当前玩家；本手结束后将其移座。房主离开后会自动转让。</p></section>
