@@ -327,9 +327,39 @@ test("1000 automated hands always terminate with legal cards and chips", () => {
       observed.push(state.discardCard.id);
       observed.push(...state.deck.map((entry) => entry.id));
       assert.equal(new Set(observed).size, observed.length);
-      assert.equal(observed.length, 94);
+      assert.ok(observed.length <= 94);
     }
   }
+});
+
+test("the deck is reused across hands and only reshuffles when capacity is low", () => {
+  const state = Engine.createGame({
+    seed: 616,
+    playerCount: 4,
+    startingChips: 100000
+  });
+  Engine.startNextHand(state);
+  assert.equal(state.reshuffledThisHand, true);
+  assert.equal(state.deckCycle, 1);
+  playHandToCompletion(state);
+
+  const remainingBeforeSecondHand = state.deck.map((entry) => entry.id);
+  Engine.startNextHand(state);
+  assert.equal(state.reshuffledThisHand, false);
+  assert.equal(state.deckCycle, 1);
+  const firstDealt = state.players.find(
+    (player) => player.holeCard
+  ).holeCard.id;
+  assert.ok(remainingBeforeSecondHand.includes(firstDealt));
+
+  let hands = 2;
+  while (state.deckCycle === 1 && hands < 30) {
+    playHandToCompletion(state);
+    Engine.startNextHand(state);
+    hands += 1;
+  }
+  assert.ok(state.deckCycle >= 2);
+  assert.ok(state.lastReshuffleHand);
 });
 
 test("zero-chip AI players are excluded from the next hand without rebuying", () => {
@@ -519,4 +549,35 @@ test("configured bet cap limits raises without forcing an invalid all-in", () =>
   assert.equal(response.call.amount, 60);
   assert.equal(response.raise, null);
   assert.equal(response.allIn, null);
+});
+
+test("players can fold early before their betting turn but not after acting", () => {
+  const state = Engine.createGame({ seed: 1301, playerCount: 5 });
+  Engine.startNextHand(state);
+  const opener = state.actorIndex;
+  const earlyPlayer = [0, 1, 2, 3, 4].find((index) => index !== opener);
+  assert.equal(Engine.getEarlyFoldEligibility(state, earlyPlayer), true);
+  Engine.performEarlyFold(state, earlyPlayer);
+  assert.equal(state.players[earlyPlayer].folded, true);
+  assert.equal(state.players[earlyPlayer].lastAction, "提前弃牌");
+  assert.equal(Engine.getEarlyFoldEligibility(state, earlyPlayer), false);
+
+  const legal = Engine.getLegalActions(state, state.actorIndex);
+  Engine.performAction(
+    state,
+    legal.call ? { type: "call" } : { type: "raise", amount: legal.raise.min }
+  );
+  const actedPlayer = state.players.find(
+    (player) =>
+      !player.folded &&
+      !player.eliminated &&
+      state.actedThisRound.includes(player.seat) &&
+      player.seat !== state.actorIndex
+  );
+  if (actedPlayer) {
+    assert.equal(
+      Engine.getEarlyFoldEligibility(state, actedPlayer.seat),
+      false
+    );
+  }
 });

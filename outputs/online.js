@@ -6,6 +6,7 @@
   const NAME_KEY = "sanpi-online-name";
   const AVATAR_KEY = "sanpi-online-avatar";
   const PREF_KEY = "sanpi-online-preferences";
+  const HOST_TOKEN_KEY = "sanpi-online-host-token";
   const PRESET_AVATARS = [
     { id: "jester", emoji: "🃏", color: "#70435f" },
     { id: "fox", emoji: "🦊", color: "#8d4d2f" },
@@ -86,6 +87,8 @@
     intentionalClose: false,
     pendingAction: false,
     entryMode: "create",
+    hostPortalMode: false,
+    hostToken: null,
     countdownTimer: null,
     draftAvatars: {
       create: "preset:jester",
@@ -103,6 +106,7 @@
     lastPresentationKey: "",
     lastChatMessageId: null,
     pendingChatBubble: null,
+    lastTurnAlertSignature: "",
     speechQueue: [],
     speaking: false,
     audioContext: null
@@ -129,6 +133,12 @@
     "joinAvatarFile",
     "joinPresetAvatars",
     "entryError",
+    "hostPortalPanel",
+    "createHostLinkButton",
+    "hostLinkResult",
+    "hostLinkInput",
+    "copyHostLinkButton",
+    "hostLinkError",
     "roomScreen",
     "headerRoomCode",
     "connectionBadge",
@@ -151,6 +161,7 @@
     "spectatorList",
     "hostHint",
     "lobbyStakeSettings",
+    "lobbyStartingChipsInput",
     "lobbyAnteInput",
     "lobbyBetCapInput",
     "saveStakeSettingsButton",
@@ -160,6 +171,9 @@
     "transferHostButton",
     "onlineGameArea",
     "onlineTableShell",
+    "onlineTurnAlert",
+    "onlineTurnAlertText",
+    "onlineGoToActionButton",
     "onlineSeatLayer",
     "onlineHumanHandZone",
     "spectatorNotice",
@@ -191,6 +205,7 @@
     "onlineWaitingTitle",
     "onlineWaitingDescription",
     "hostSkipButton",
+    "onlineEarlyFoldButton",
     "onlineResultPanel",
     "onlineResultEyebrow",
     "onlineResultTitle",
@@ -208,6 +223,7 @@
     "hostRemoveButton",
     "hostTransferButton",
     "nextMatchSettings",
+    "nextStartingChipsInput",
     "nextAnteInput",
     "nextBetCapInput",
     "applyNextSettingsButton",
@@ -358,6 +374,23 @@
     }
   }
 
+  function loadHostToken() {
+    try {
+      return localStorage.getItem(HOST_TOKEN_KEY) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveHostToken(token) {
+    state.hostToken = token;
+    try {
+      localStorage.setItem(HOST_TOKEN_KEY, token);
+    } catch {
+      // The current link still works until the page is closed.
+    }
+  }
+
   function rememberName(name) {
     try {
       localStorage.setItem(NAME_KEY, name);
@@ -464,11 +497,46 @@
     if (!file) {
       return null;
     }
-    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-      throw new Error("头像只支持 PNG、JPEG 或 WebP。");
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error("原始图片不能超过 10MB。");
     }
-    if (file.size > 5 * 1024 * 1024) {
-      throw new Error("原始图片不能超过 5MB。");
+    const signature = new Uint8Array(
+      await file.slice(0, 32).arrayBuffer()
+    );
+    const isPng =
+      signature[0] === 0x89 &&
+      signature[1] === 0x50 &&
+      signature[2] === 0x4e &&
+      signature[3] === 0x47;
+    const isJpeg =
+      signature[0] === 0xff &&
+      signature[1] === 0xd8 &&
+      signature[2] === 0xff;
+    const isWebp =
+      String.fromCharCode(...signature.slice(0, 4)) === "RIFF" &&
+      String.fromCharCode(...signature.slice(8, 12)) === "WEBP";
+    const declaredType = String(file.type || "").toLowerCase();
+    const extension = String(file.name || "")
+      .toLowerCase()
+      .split(".")
+      .pop();
+    const inferredType = isPng
+      ? "image/png"
+      : isJpeg
+        ? "image/jpeg"
+        : isWebp
+          ? "image/webp"
+          : ["image/png", "image/x-png", "image/apng"].includes(declaredType) ||
+              ["png", "apng"].includes(extension)
+            ? "image/png"
+            : ["image/jpeg", "image/jpg"].includes(declaredType) ||
+                ["jpg", "jpeg"].includes(extension)
+              ? "image/jpeg"
+              : declaredType === "image/webp" || extension === "webp"
+                ? "image/webp"
+                : "";
+    if (!inferredType) {
+      throw new Error("头像只支持 PNG、JPEG 或 WebP。");
     }
     let bitmap = null;
     if (typeof createImageBitmap === "function") {
@@ -477,7 +545,9 @@
       }).catch(() => null);
     }
     if (!bitmap) {
-      const objectUrl = URL.createObjectURL(file);
+      const objectUrl = URL.createObjectURL(
+        file.type ? file : new Blob([file], { type: inferredType })
+      );
       bitmap = await new Promise((resolve, reject) => {
         const image = new Image();
         image.onload = () => resolve(image);
@@ -497,12 +567,23 @@
     const sy = (bitmap.height - size) / 2;
     context.drawImage(bitmap, sx, sy, size, size, 0, 0, 256, 256);
     bitmap.close?.();
-    let dataUrl = canvas.toDataURL("image/webp", 0.82);
-    if (!dataUrl.startsWith("data:image/webp")) {
-      dataUrl = canvas.toDataURL("image/jpeg", 0.86);
+    const encode = (targetCanvas, quality = 0.82) => {
+      const dataUrl = targetCanvas.toDataURL("image/webp", quality);
+      return dataUrl.startsWith("data:image/webp")
+        ? dataUrl
+        : targetCanvas.toDataURL("image/png");
+    };
+    let dataUrl = encode(canvas);
+    if (dataUrl.length > 250_000) {
+      const compact = document.createElement("canvas");
+      compact.width = 192;
+      compact.height = 192;
+      const compactContext = compact.getContext("2d");
+      compactContext.drawImage(canvas, 0, 0, 192, 192);
+      dataUrl = encode(compact, 0.72);
     }
     if (dataUrl.length > 250_000) {
-      dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+      throw new Error("图片压缩后仍然过大，请换一张更小的图片。");
     }
     return dataUrl;
   }
@@ -536,8 +617,14 @@
     el.loadingScreen.hidden = true;
     el.roomScreen.hidden = true;
     el.entryScreen.hidden = false;
+    el.onlineTurnAlert.hidden = true;
+    document.body.classList.remove("is-my-turn");
+    if (document.title.startsWith("●")) {
+      document.title = "三皮牌局 · 联机";
+    }
     el.createRoomPanel.hidden = mode !== "create";
     el.joinRoomPanel.hidden = mode !== "join";
+    el.hostPortalPanel.hidden = !state.hostPortalMode;
     const preferredName = loadPreferredName();
     const preferredAvatar = loadPreferredAvatar();
     state.draftAvatars.create = preferredAvatar;
@@ -552,7 +639,61 @@
       }
     }
     renderAvatarPickers();
+    renderHostPortal();
     setEntryError(errorMessage || "");
+  }
+
+  function renderHostPortal() {
+    if (!state.hostPortalMode) {
+      return;
+    }
+    const hasToken = Boolean(state.hostToken);
+    el.createHostLinkButton.hidden = hasToken;
+    el.hostLinkResult.hidden = !hasToken;
+    if (hasToken) {
+      el.hostLinkInput.value = `${location.origin}/host#owner=${state.hostToken}`;
+    }
+  }
+
+  async function generateHostLink() {
+    el.hostLinkError.hidden = true;
+    try {
+      const response = await fetch("/api/host-links", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "生成房主链接失败。");
+      }
+      saveHostToken(payload.token);
+      renderHostPortal();
+      showToast("永久房主链接已生成");
+    } catch (error) {
+      el.hostLinkError.textContent = error.message;
+      el.hostLinkError.hidden = false;
+    }
+  }
+
+  async function verifyHostToken() {
+    if (!state.hostToken) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/host/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: state.hostToken })
+      });
+      if (!response.ok) {
+        state.hostToken = null;
+        localStorage.removeItem(HOST_TOKEN_KEY);
+      }
+    } catch {
+      // The create request will validate the token again.
+    }
+    renderHostPortal();
   }
 
   function showRoom() {
@@ -576,7 +717,8 @@
       const payload = await requestJson("/api/rooms", {
         name,
         seatCap,
-        avatar: state.draftAvatars.create
+        avatar: state.draftAvatars.create,
+        ownerToken: state.hostToken || undefined
       });
       saveSession(payload.roomCode, payload);
       rememberName(name);
@@ -1352,7 +1494,11 @@
     el.onlinePhaseText.textContent = game.tableOver
       ? "本局结束"
       : game.presentation?.kind === "initial"
-        ? game.presentation.stage === "hole"
+        ? game.presentation.stage === "hole" &&
+          game.presentation.sequence === 0 &&
+          game.reshuffledThisHand
+          ? "正在重新洗牌"
+          : game.presentation.stage === "hole"
           ? "正在发暗牌"
           : game.presentation.stage === "up"
             ? "正在发明牌"
@@ -1383,7 +1529,11 @@
     } else if (game.presentation) {
       el.onlineTableHint.textContent =
         game.presentation.kind === "initial"
-          ? "牌正从牌堆发往每位玩家，请稍候。"
+          ? game.presentation.stage === "hole" &&
+            game.presentation.sequence === 0 &&
+            game.reshuffledThisHand
+            ? "剩余牌堆不足，正在收回 94 张牌统一重洗。"
+            : "牌正从牌堆发往每位玩家，请稍候。"
           : "第三张牌正在依次公开。";
     } else if (game.phase === "complete") {
       el.onlineTableHint.textContent = game.summary?.reason || "本手结束";
@@ -1423,6 +1573,62 @@
     }
   }
 
+  function sendEarlyFold() {
+    const game = state.room?.game;
+    if (!game) {
+      return;
+    }
+    const requestId =
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (
+      sendMessage({
+        type: "early-fold",
+        handNo: game.handNo,
+        requestId
+      })
+    ) {
+      state.pendingAction = true;
+      renderActionControls();
+    }
+  }
+
+  function renderOnlineTurnAlert() {
+    const game = state.room?.game;
+    const selfIndex = game ? findSelfGameIndex(game) : -1;
+    const active =
+      Boolean(game) &&
+      !game.presentation &&
+      selfIndex >= 0 &&
+      !game.players[selfIndex].folded &&
+      !game.players[selfIndex].eliminated &&
+      game.actorIndex === selfIndex &&
+      ["bet1", "bet2"].includes(game.phase);
+    if (!active) {
+      el.onlineTurnAlert.hidden = true;
+      document.body.classList.remove("is-my-turn");
+      if (document.title.startsWith("●")) {
+        document.title = "三皮牌局 · 联机";
+      }
+      return;
+    }
+    el.onlineTurnAlert.hidden = false;
+    document.body.classList.add("is-my-turn");
+    const signature = `${game.handNo}:${game.phase}:${game.actorIndex}:${game.currentBet}:${game.actedThisRound.join(",")}`;
+    if (signature !== state.lastTurnAlertSignature) {
+      state.lastTurnAlertSignature = signature;
+      el.onlineTurnAlertText.textContent =
+        game.phase === "bet1" ? "第一轮，请选择操作" : "第二轮，请选择操作";
+      document.title = "● 轮到你 · 三皮牌局";
+      playTone(540, 0.11, 0.022, "triangle");
+      window.setTimeout(() => playTone(720, 0.15, 0.016, "triangle"), 90);
+      if ("vibrate" in navigator && state.preferences.sound) {
+        navigator.vibrate([120, 70, 120]);
+      }
+    }
+  }
+
   function setButtonDisabled(button, disabled) {
     button.disabled = Boolean(disabled);
   }
@@ -1440,9 +1646,15 @@
       !self.folded &&
       game.actorIndex === selfIndex &&
       ["bet1", "bet2"].includes(game.phase);
+    const canEarlyFold =
+      !isMyTurn &&
+      !game.presentation &&
+      selfIndex >= 0 &&
+      Engine.getEarlyFoldEligibility(game, selfIndex);
     el.onlineBettingControls.hidden = !isMyTurn;
     el.onlineWaitingControls.hidden = true;
     el.onlineResultPanel.hidden = game.phase !== "complete";
+    el.onlineEarlyFoldButton.hidden = !canEarlyFold;
     if (isMyTurn) {
       const legal = Engine.getLegalActions(game, selfIndex);
       const need = Math.max(0, game.currentBet - self.roundContribution);
@@ -1492,6 +1704,7 @@
       el.onlineTurnDescription.textContent =
         "服务器会验证金额和行动顺序，其他玩家的底牌不会下发到你的浏览器。";
       el.hostSkipButton.hidden = true;
+      el.onlineEarlyFoldButton.hidden = true;
       return;
     }
 
@@ -1505,6 +1718,7 @@
       el.onlineWaitingDescription.textContent =
         "所有玩家会看到同一套发牌顺序。";
       el.hostSkipButton.hidden = true;
+      el.onlineEarlyFoldButton.hidden = true;
       return;
     }
 
@@ -1681,6 +1895,9 @@
     el.nextMatchSettings.hidden = !isHost || !game?.tableOver;
     if (document.activeElement !== el.nextAnteInput) {
       el.nextAnteInput.value = String(room.ante ?? 10);
+    }
+    if (document.activeElement !== el.nextStartingChipsInput) {
+      el.nextStartingChipsInput.value = String(room.startingChips ?? 1000);
     }
     if (document.activeElement !== el.nextBetCapInput) {
       el.nextBetCapInput.value = String(room.betCap ?? 0);
@@ -1886,6 +2103,11 @@
 
   function renderLobby() {
     const room = state.room;
+    el.onlineTurnAlert.hidden = true;
+    document.body.classList.remove("is-my-turn");
+    if (document.title.startsWith("●")) {
+      document.title = "三皮牌局 · 联机";
+    }
     el.lobbyArea.hidden = false;
     el.onlineGameArea.hidden = true;
     el.headerRoomCode.textContent = room.code;
@@ -1894,7 +2116,9 @@
     el.seatedPlayerCount.textContent = room.seats.filter(Boolean).length;
     el.lobbyRoomStatus.textContent =
       room.status === "matchOver" ? "上一局结束" : "等待开局";
-    const stakeText = `底注 ${formatNumber(room.ante)} · 单注封顶 ${
+    const stakeText = `每人本钱 ${formatNumber(
+      room.startingChips
+    )} · 底注 ${formatNumber(room.ante)} · 单注封顶 ${
       room.betCap > 0 ? formatNumber(room.betCap) : "无上限"
     }`;
     el.lobbyLead.textContent =
@@ -1953,6 +2177,9 @@
     if (document.activeElement !== el.lobbyAnteInput) {
       el.lobbyAnteInput.value = String(room.ante ?? 10);
     }
+    if (document.activeElement !== el.lobbyStartingChipsInput) {
+      el.lobbyStartingChipsInput.value = String(room.startingChips ?? 1000);
+    }
     if (document.activeElement !== el.lobbyBetCapInput) {
       el.lobbyBetCapInput.value = String(room.betCap ?? 0);
     }
@@ -1997,11 +2224,12 @@
     renderHostControls();
     renderEquity(game);
     renderChat();
+    renderOnlineTurnAlert();
     const remaining = game.players.filter((player) => !player.eliminated).length;
     el.onlineRemainingText.textContent = `剩余 ${remaining} 人`;
-    el.onlineStakesText.textContent = `底注 ${formatNumber(
-      state.room.ante
-    )} · 单注封顶 ${
+    el.onlineStakesText.textContent = `本钱 ${formatNumber(
+      state.room.startingChips
+    )} · 底注 ${formatNumber(state.room.ante)} · 单注封顶 ${
       state.room.betCap > 0 ? formatNumber(state.room.betCap) : "无上限"
     }`;
     animatePresentationCard(game);
@@ -2034,6 +2262,20 @@
       showToast("邀请链接已复制");
     } catch {
       showToast(`邀请链接：${link}`);
+    }
+  }
+
+  async function copyHostLink() {
+    const link = el.hostLinkInput.value;
+    if (!link) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      showToast("永久房主链接已复制");
+    } catch {
+      el.hostLinkInput.select();
+      showToast("请手动复制已选中的房主链接");
     }
   }
 
@@ -2106,10 +2348,11 @@
     sendMessage(Object.assign({ type }, extra || {}));
   }
 
-  function stakeSettingsFrom(inputAnte, inputCap) {
+  function stakeSettingsFrom(inputAnte, inputCap, inputStartingChips) {
     return {
       ante: Number(inputAnte.value),
-      betCap: Number(inputCap.value)
+      betCap: Number(inputCap.value),
+      startingChips: Number(inputStartingChips.value)
     };
   }
 
@@ -2166,6 +2409,8 @@
   function bindEvents() {
     el.createRoomForm?.addEventListener("submit", createRoom);
     el.joinRoomForm?.addEventListener("submit", joinRoom);
+    el.createHostLinkButton.addEventListener("click", generateHostLink);
+    el.copyHostLinkButton.addEventListener("click", copyHostLink);
     [
       ["create", el.createAvatarFile],
       ["join", el.joinAvatarFile],
@@ -2264,13 +2509,21 @@
     el.lobbyStartButton.addEventListener("click", () =>
       sendHostCommand(
         "host:start",
-        stakeSettingsFrom(el.lobbyAnteInput, el.lobbyBetCapInput)
+        stakeSettingsFrom(
+          el.lobbyAnteInput,
+          el.lobbyBetCapInput,
+          el.lobbyStartingChipsInput
+        )
       )
     );
     el.saveStakeSettingsButton.addEventListener("click", () =>
       sendHostCommand(
         "host:settings",
-        stakeSettingsFrom(el.lobbyAnteInput, el.lobbyBetCapInput)
+        stakeSettingsFrom(
+          el.lobbyAnteInput,
+          el.lobbyBetCapInput,
+          el.lobbyStartingChipsInput
+        )
       )
     );
     el.hostPauseButton.addEventListener("click", () =>
@@ -2285,13 +2538,21 @@
     el.hostRestartButton.addEventListener("click", () =>
       sendHostCommand(
         "host:start",
-        stakeSettingsFrom(el.nextAnteInput, el.nextBetCapInput)
+        stakeSettingsFrom(
+          el.nextAnteInput,
+          el.nextBetCapInput,
+          el.nextStartingChipsInput
+        )
       )
     );
     el.applyNextSettingsButton.addEventListener("click", () =>
       sendHostCommand(
         "host:settings",
-        stakeSettingsFrom(el.nextAnteInput, el.nextBetCapInput)
+        stakeSettingsFrom(
+          el.nextAnteInput,
+          el.nextBetCapInput,
+          el.nextStartingChipsInput
+        )
       )
     );
     el.hostSkipButton.addEventListener("click", () => {
@@ -2336,6 +2597,17 @@
     el.onlineFoldButton.addEventListener("click", () =>
       sendPlayerAction({ type: "fold" })
     );
+    el.onlineEarlyFoldButton.addEventListener("click", () => {
+      if (window.confirm("确定提前弃牌吗？弃牌后不能撤回。")) {
+        sendEarlyFold();
+      }
+    });
+    el.onlineGoToActionButton.addEventListener("click", () => {
+      el.onlineBettingControls.scrollIntoView({
+        behavior: prefsMotion() ? "smooth" : "auto",
+        block: "center"
+      });
+    });
     el.onlineCallButton.addEventListener("click", () =>
       sendPlayerAction({ type: "call" })
     );
@@ -2375,6 +2647,19 @@
     applyOnlinePreferences();
     renderAvatarPickers();
     setSocialTab("equity");
+    state.hostPortalMode =
+      location.pathname === "/host" || location.pathname === "/host/";
+    state.hostToken = loadHostToken();
+    if (state.hostPortalMode) {
+      const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+      const incomingToken = hash.get("owner");
+      if (incomingToken) {
+        state.hostToken = incomingToken;
+        saveHostToken(incomingToken);
+        history.replaceState({}, "", "/host");
+      }
+      verifyHostToken();
+    }
     state.countdownTimer = setInterval(updateCountdown, 250);
     const code = routeCode();
     if (code) {

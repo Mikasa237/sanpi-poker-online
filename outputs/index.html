@@ -197,6 +197,11 @@
               </p>
               <div id="miniLog" class="mini-log" aria-live="polite"></div>
             </div>
+            <div id="turnAlert" class="turn-alert" hidden role="status" aria-live="assertive">
+              <strong>轮到你行动</strong>
+              <span id="turnAlertText">请下注、跟注或弃牌</span>
+              <button id="goToActionButton" type="button">去操作</button>
+            </div>
           </section>
 
           <aside class="action-dock" aria-label="操作区">
@@ -257,6 +262,9 @@
                 <strong id="waitingTitle">等待 AI 行动</strong>
                 <p id="waitingDescription">AI 正在评估牌力。</p>
               </div>
+              <button id="localEarlyFoldButton" class="early-fold-button" type="button" hidden>
+                提前弃牌
+              </button>
             </section>
 
             <section id="localEquityPanel" class="local-equity-panel" hidden>

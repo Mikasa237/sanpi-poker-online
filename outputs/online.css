@@ -49,6 +49,11 @@
   color: var(--ink);
 }
 
+.host-entry-link {
+  margin: 14px 0 0;
+  color: var(--gold);
+}
+
 .entry-screen {
   width: min(1180px, calc(100% - 48px));
   min-height: 100vh;
@@ -117,6 +122,46 @@
 .entry-card h2 span {
   color: var(--gold-bright);
   letter-spacing: 0.08em;
+}
+
+.host-portal-panel {
+  padding-bottom: 20px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.host-portal-panel h2 {
+  margin-bottom: 8px;
+}
+
+.host-portal-panel > p:not(.section-kicker):not(.entry-error) {
+  margin: 0 0 13px;
+  color: var(--ink-dim);
+  font-size: 0.72rem;
+  line-height: 1.65;
+}
+
+.host-link-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.host-link-result input {
+  min-width: 0;
+  padding: 7px 9px;
+  color: var(--gold);
+  font-size: 0.64rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.host-link-result .primary-button {
+  min-height: 36px;
+  padding: 5px 10px;
+  font-size: 0.68rem;
 }
 
 .online-field {
@@ -609,6 +654,10 @@
 
 .stake-settings .compact-field {
   margin: 0;
+}
+
+.stake-settings .compact-field:first-child {
+  grid-column: 1 / -1;
 }
 
 .stake-settings input {

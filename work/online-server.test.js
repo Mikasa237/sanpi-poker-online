@@ -549,7 +549,7 @@ test("uploaded avatars are validated, served, and broadcast to the room", async 
   t.after(() => server.app.close());
 
   const png =
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    "data:application/octet-stream;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
   const created = await request(server.baseUrl, "/api/rooms", {
     name: "头像测试",
     seatCap: 2,
@@ -569,6 +569,33 @@ test("uploaded avatars are validated, served, and broadcast to the room", async 
   assert.equal(avatarResponse.status, 200);
   assert.equal(avatarResponse.headers.get("content-type"), "image/png");
   assert.ok((await avatarResponse.arrayBuffer()).byteLength > 0);
+
+  const jpeg =
+    "data:image/x-png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==";
+  const webp =
+    "data:;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAUAmJQBOgCHwAP7+4AAAAA==";
+  for (const [name, avatar, expectedType] of [
+    ["JPEG 测试", jpeg, "image/jpeg"],
+    ["WebP 测试", webp, "image/webp"]
+  ]) {
+    const room = await request(server.baseUrl, "/api/rooms", {
+      name,
+      seatCap: 2,
+      avatar
+    });
+    assert.equal(room.response.status, 201, room.payload.error);
+    const roomClient = await createClient(
+      server.baseUrl,
+      room.payload.roomCode,
+      room.payload.token
+    );
+    const roomState = await roomClient.waitFor(
+      (message) => message.type === "room:state"
+    );
+    const image = await fetch(`${server.baseUrl}${roomState.room.self.avatarUrl}`);
+    assert.equal(image.headers.get("content-type"), expectedType);
+    roomClient.close();
+  }
 
   const update = await fetch(`${server.baseUrl}/api/profile/avatar`, {
     method: "POST",
@@ -808,18 +835,43 @@ test("host can configure ante and bet cap before starting", async (t) => {
   hostClient.send({
     type: "host:settings",
     ante: 25,
-    betCap: 250
+    betCap: 250,
+    startingChips: 5000
   });
   const configured = await guestClient.waitFor(
     (message) =>
-      message.room?.ante === 25 && message.room?.betCap === 250
+      message.room?.ante === 25 &&
+      message.room?.betCap === 250 &&
+      message.room?.startingChips === 5000
   );
   assert.equal(configured.room.game, null);
 
   hostClient.send({
+    type: "host:settings",
+    ante: 3,
+    betCap: 500,
+    startingChips: 2000
+  });
+  const invalid = await hostClient.waitFor(
+    (message) => message.type === "error"
+  );
+  assert.match(invalid.message, /底注/);
+  hostClient.send({
+    type: "host:settings",
+    ante: 20,
+    betCap: 500,
+    startingChips: 90
+  });
+  const invalidStack = await hostClient.waitFor(
+    (message) => message.type === "error"
+  );
+  assert.match(invalidStack.message, /本钱/);
+
+  hostClient.send({
     type: "host:start",
     ante: 20,
-    betCap: 120
+    betCap: 120,
+    startingChips: 2000
   });
   const started = await hostClient.waitFor(
     (message) =>
@@ -828,17 +880,106 @@ test("host can configure ante and bet cap before starting", async (t) => {
   );
   assert.equal(started.room.game.config.ante, 20);
   assert.equal(started.room.game.config.betCap, 120);
-  assert.equal(started.room.game.players[0].stack, 980);
+  assert.equal(started.room.game.config.startingChips, 2000);
+  assert.equal(started.room.game.players[0].stack, 1980);
 
-  hostClient.send({
-    type: "host:settings",
-    ante: 3,
-    betCap: 500
-  });
-  const invalid = await hostClient.waitFor(
-    (message) => message.type === "error"
-  );
-  assert.match(invalid.message, /底注/);
   hostClient.close();
   guestClient.close();
+});
+
+test("a player can fold early before their turn", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "房主", 3);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "访客");
+  const thirdJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "第三人");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  const thirdClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    thirdJoin.payload.token
+  );
+  const clients = [
+    { userId: hostRoom.userId, client: hostClient },
+    { userId: guestJoin.payload.userId, client: guestClient },
+    { userId: thirdJoin.payload.userId, client: thirdClient }
+  ];
+  hostClient.send({ type: "host:start" });
+  const state = await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
+  );
+  const actor = actorId(state.room.game);
+  const early = clients.find((entry) => entry.userId !== actor);
+  early.client.send({
+    type: "early-fold",
+    handNo: state.room.game.handNo,
+    requestId: "early-fold-once"
+  });
+  const folded = await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.players?.find(
+        (player) => player.id === early.userId
+      )?.folded === true
+  );
+  assert.equal(actorId(folded.room.game), actor);
+  early.client.send({
+    type: "early-fold",
+    handNo: state.room.game.handNo,
+    requestId: "early-fold-twice"
+  });
+  const error = await early.client.waitFor(
+    (message) => message.type === "error"
+  );
+  assert.match(error.message, /不能提前弃牌/);
+  hostClient.close();
+  guestClient.close();
+  thirdClient.close();
+});
+
+test("permanent host links verify and can create multiple rooms", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const created = await request(server.baseUrl, "/api/host-links", {});
+  assert.equal(created.response.status, 201, created.payload.error);
+  assert.match(created.payload.hostUrl, /\/host#owner=/);
+  const verified = await request(server.baseUrl, "/api/host/verify", {
+    token: created.payload.token
+  });
+  assert.equal(verified.response.status, 200);
+  assert.equal(verified.payload.ownerId, created.payload.ownerId);
+
+  for (let index = 0; index < 2; index += 1) {
+    const room = await request(server.baseUrl, "/api/rooms", {
+      name: `房主${index + 1}`,
+      seatCap: 4,
+      avatar: "preset:jester",
+      ownerToken: created.payload.token
+    });
+    assert.equal(room.response.status, 201, room.payload.error);
+  }
+
+  const page = await fetch(`${server.baseUrl}/host`);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /永久房主入口/);
+
+  const restarted = await startServer();
+  const afterRestart = await request(restarted.baseUrl, "/api/host/verify", {
+    token: created.payload.token
+  });
+  assert.equal(afterRestart.response.status, 200);
+  assert.equal(afterRestart.payload.ownerId, created.payload.ownerId);
+  await restarted.app.close();
 });
