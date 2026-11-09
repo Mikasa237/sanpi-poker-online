@@ -14,6 +14,7 @@ const MAX_ROOM_PEOPLE = 10;
 const AUTO_NEXT_MS = 8000;
 const ROOM_IDLE_MS = 30 * 60 * 1000;
 const TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
+const HOST_TOKEN_LIFETIME_SECONDS = 10 * 365 * 24 * 60 * 60;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_AVATAR_BODY_BYTES = 512 * 1024;
 const MAX_STORED_AVATAR_BYTES = 192 * 1024;
@@ -132,6 +133,47 @@ function verifyRoomToken(token, roomCode) {
   }
 }
 
+function issueHostToken(ownerId) {
+  const payload = base64url(
+    JSON.stringify({
+      k: "host",
+      o: ownerId,
+      e: Math.floor(Date.now() / 1000) + HOST_TOKEN_LIFETIME_SECONDS
+    })
+  );
+  return `${payload}.${signTokenPayload(payload)}`;
+}
+
+function verifyHostToken(token) {
+  if (typeof token !== "string" || token.length > 2048) {
+    return null;
+  }
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) {
+    return null;
+  }
+  const expected = signTokenPayload(payload);
+  const left = Buffer.from(signature);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (
+      parsed.k !== "host" ||
+      typeof parsed.o !== "string" ||
+      !Number.isFinite(parsed.e) ||
+      parsed.e < Math.floor(Date.now() / 1000)
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeName(value) {
   if (typeof value !== "string") {
     throw new RequestError(400, "请输入昵称。");
@@ -169,7 +211,9 @@ function decodeAvatar(value) {
   if (/^preset:[a-z0-9-]{1,32}$/.test(value)) {
     return { url: value, bytes: null };
   }
-  const match = value.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+  const match = value.match(
+    /^data:([^,]*?)(?:;base64),([A-Za-z0-9+/=]+)$/
+  );
   if (!match) {
     throw new RequestError(400, "头像格式不受支持。");
   }
@@ -193,7 +237,11 @@ function decodeAvatar(value) {
     throw new RequestError(400, "头像内容不是有效图片。");
   }
   return {
-    mimeType: match[1],
+    mimeType: validPng
+      ? "image/png"
+      : validJpeg
+        ? "image/jpeg"
+        : "image/webp",
     bytes
   };
 }
@@ -206,9 +254,25 @@ function seatCapFromValue(value) {
   return number;
 }
 
-function normalizeStakeSettings(anteValue, capValue, startingChips = 1000) {
+function normalizeStakeSettings(
+  anteValue,
+  capValue,
+  startingChipsValue = 1000
+) {
   const ante = Number(anteValue);
   const betCap = Number(capValue);
+  const startingChips = Number(startingChipsValue);
+  if (
+    !Number.isInteger(startingChips) ||
+    startingChips < 100 ||
+    startingChips > 100000 ||
+    startingChips % 100 !== 0
+  ) {
+    throw new RequestError(
+      400,
+      "每人本钱需要设置为 100–100000，且为 100 的倍数。"
+    );
+  }
   if (!Number.isInteger(ante) || ante < 5 || ante > 100 || ante % 5 !== 0) {
     throw new RequestError(400, "底注需要设置为 5–100，且为 5 的倍数。");
   }
@@ -224,7 +288,7 @@ function normalizeStakeSettings(anteValue, capValue, startingChips = 1000) {
       `单注上限需要为 0–${startingChips}，且为 10 的倍数；0 表示无上限。`
     );
   }
-  return { ante, betCap };
+  return { ante, betCap, startingChips };
 }
 
 function ensureUniqueName(room, name, exceptUserId) {
@@ -669,7 +733,7 @@ function startNewMatch(room, broadcast) {
     mode: "online",
     playerCount: room.seatCap,
     onlinePlayers,
-    startingChips: 1000,
+    startingChips: room.startingChips,
     ante: room.ante,
     minBet: room.ante,
     betCap: room.betCap
@@ -823,6 +887,7 @@ function makeRoomView(room, participant) {
       seatCap: room.seatCap,
       ante: room.ante,
       betCap: room.betCap,
+      startingChips: room.startingChips,
       status: room.status,
       hostId: room.hostId,
       paused: room.paused,
@@ -1191,14 +1256,19 @@ function createGameServer(options = {}) {
         room.status === "matchOver" ||
         !room.game
       ) {
-        if (Number.isFinite(Number(message.ante)) || Number.isFinite(Number(message.betCap))) {
+        if (
+          Number.isFinite(Number(message.ante)) ||
+          Number.isFinite(Number(message.betCap)) ||
+          Number.isFinite(Number(message.startingChips))
+        ) {
           const stakes = normalizeStakeSettings(
             message.ante ?? room.ante,
             message.betCap ?? room.betCap,
-            1000
+            message.startingChips ?? room.startingChips
           );
           room.ante = stakes.ante;
           room.betCap = stakes.betCap;
+          room.startingChips = stakes.startingChips;
         }
         startNewMatch(room, broadcast);
       } else if (room.game.phase === "complete") {
@@ -1211,10 +1281,11 @@ function createGameServer(options = {}) {
         const stakes = normalizeStakeSettings(
           message.ante,
           message.betCap,
-          1000
+          message.startingChips ?? room.startingChips
         );
         room.ante = stakes.ante;
         room.betCap = stakes.betCap;
+        room.startingChips = stakes.startingChips;
         return;
       }
       throw new RequestError(409, "牌局进行中不能修改底注和上限。");
@@ -1349,6 +1420,43 @@ function createGameServer(options = {}) {
     }
   }
 
+  function handleEarlyFold(room, participant, message) {
+    if (room.presentation) {
+      throw new RequestError(409, "正在发牌，请稍候。");
+    }
+    if (!room.game || room.status !== "playing") {
+      throw new RequestError(409, "牌局尚未开始。");
+    }
+    if (participant.seat === null) {
+      throw new RequestError(403, "旁观者不能弃牌。");
+    }
+    if (message.handNo !== room.game.handNo) {
+      throw new RequestError(409, "这手牌已经结束。");
+    }
+    const requestId = String(message.requestId || "");
+    const requestKey = `${message.handNo}:early:${requestId}`;
+    room.processedRequests ||= new Map();
+    const seen = room.processedRequests.get(participant.id) || [];
+    if (requestId && seen.includes(requestKey)) {
+      return;
+    }
+    if (!Engine.getEarlyFoldEligibility(room.game, participant.seat)) {
+      throw new RequestError(409, "当前不能提前弃牌。");
+    }
+    Engine.performEarlyFold(room.game, participant.seat);
+    if (requestId) {
+      seen.push(requestKey);
+      if (seen.length > 40) {
+        seen.splice(0, seen.length - 40);
+      }
+      room.processedRequests.set(participant.id, seen);
+    }
+    if (room.game.phase === "complete") {
+      handleCompletedHand(room);
+      scheduleAutoNext(room, broadcast);
+    }
+  }
+
   function handleSocketMessage(socket, raw) {
     let message;
     try {
@@ -1400,6 +1508,8 @@ function createGameServer(options = {}) {
       }
       if (message.type === "rename") {
         renameParticipant(room, participant, message.name);
+      } else if (message.type === "early-fold") {
+        handleEarlyFold(room, participant, message);
       } else if (message.type === "chat:send") {
         handleChatMessage(room, participant, message);
       } else if (message.type === "emote:throw") {
@@ -1527,6 +1637,40 @@ function createGameServer(options = {}) {
 
       if (
         request.method === "POST" &&
+        requestUrl.pathname === "/api/host-links"
+      ) {
+        if (!allowRequest(request, "host-link", 6, 60_000)) {
+          throw new RequestError(429, "操作过于频繁，请稍后再试。");
+        }
+        const ownerId = randomId("host");
+        const token = issueHostToken(ownerId);
+        sendJson(response, 201, {
+          ownerId,
+          token,
+          hostUrl: `${shareOrigin(request)}/host#owner=${token}`
+        });
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
+        requestUrl.pathname === "/api/host/verify"
+      ) {
+        const body = await readJsonBody(request);
+        const payload = verifyHostToken(body.token);
+        if (!payload) {
+          throw new RequestError(401, "永久房主链接无效或已过期。");
+        }
+        sendJson(response, 200, {
+          valid: true,
+          ownerId: payload.o,
+          expiresAt: payload.e * 1000
+        });
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
         requestUrl.pathname === "/api/rooms"
       ) {
         if (!allowRequest(request, "create", 12, 60_000)) {
@@ -1536,6 +1680,12 @@ function createGameServer(options = {}) {
           throw new RequestError(503, "当前房间数量已满，请稍后再试。");
         }
         const body = await readJsonBody(request, MAX_AVATAR_BODY_BYTES);
+        const hostPayload = body.ownerToken
+          ? verifyHostToken(body.ownerToken)
+          : null;
+        if (body.ownerToken && !hostPayload) {
+          throw new RequestError(401, "永久房主链接无效或已过期。");
+        }
         const name = normalizeName(body.name);
         const seatCap = seatCapFromValue(body.seatCap);
         let code = randomCode(ROOM_CODE_LENGTH);
@@ -1546,8 +1696,10 @@ function createGameServer(options = {}) {
         const room = {
           code,
           seatCap,
+          ownerId: hostPayload?.o || null,
           ante: 10,
           betCap: 0,
+          startingChips: 1000,
           hostId: null,
           status: "lobby",
           paused: false,
@@ -1682,6 +1834,8 @@ function createGameServer(options = {}) {
         if (
           requestUrl.pathname === "/online" ||
           requestUrl.pathname === "/online.html" ||
+          requestUrl.pathname === "/host" ||
+          requestUrl.pathname === "/host/" ||
           /^\/room\/[A-Z0-9]{6}\/?$/.test(requestUrl.pathname)
         ) {
           serveFile(response, path.join(ROOT, "online.html"));

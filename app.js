@@ -51,6 +51,7 @@
   let localPresentation = null;
   let localPresentationTimers = [];
   let localEquityCache = null;
+  let lastTurnAlertSignature = "";
 
   const el = {};
   const ids = [
@@ -75,6 +76,9 @@
     "seatLayer",
     "humanHandZone",
     "tableShell",
+    "turnAlert",
+    "turnAlertText",
+    "goToActionButton",
     "phaseDot",
     "phaseText",
     "potAmount",
@@ -105,6 +109,7 @@
     "waitingControls",
     "waitingTitle",
     "waitingDescription",
+    "localEarlyFoldButton",
     "localEquityPanel",
     "localEquityHand",
     "localEquityBars",
@@ -223,6 +228,11 @@
     currentScreen = "lobby";
     el.lobbyScreen.hidden = false;
     el.gameScreen.hidden = true;
+    el.turnAlert.hidden = true;
+    document.body.classList.remove("is-my-turn");
+    if (document.title.startsWith("●")) {
+      document.title = "三皮牌局";
+    }
     clearAiTimer();
     setSelectedValues();
     renderLobbyStats();
@@ -798,7 +808,11 @@
   function phaseText() {
     if (localPresentation) {
       return localPresentation.kind === "initial"
-        ? localPresentation.stage === "hole"
+        ? localPresentation.stage === "hole" &&
+          localPresentation.index < 0 &&
+          game.reshuffledThisHand
+          ? "正在重新洗牌"
+          : localPresentation.stage === "hole"
           ? "正在发暗牌"
           : localPresentation.stage === "up"
             ? "正在发明牌"
@@ -819,7 +833,11 @@
     if (localPresentation) {
       el.tableHint.textContent =
         localPresentation.kind === "initial"
-          ? "牌正从牌堆发往每位玩家。"
+          ? localPresentation.stage === "hole" &&
+            localPresentation.index < 0 &&
+            game.reshuffledThisHand
+            ? "剩余牌堆不足，正在收回 94 张牌统一重洗。"
+            : "牌正从牌堆发往每位玩家。"
           : "第三张牌正在依次公开。";
     } else if (game.phase === "complete") {
       return "本手结束";
@@ -877,6 +895,33 @@
     );
   }
 
+  function renderTurnAlert() {
+    const active = humanTurn();
+    if (!active) {
+      el.turnAlert.hidden = true;
+      document.body.classList.remove("is-my-turn");
+      if (document.title.startsWith("●")) {
+        document.title = "三皮牌局";
+      }
+      return;
+    }
+    el.turnAlert.hidden = false;
+    document.body.classList.add("is-my-turn");
+    const signature = `${game.handNo}:${game.phase}:${game.actorIndex}:${game.currentBet}:${game.actedThisRound.join(",")}`;
+    if (signature !== lastTurnAlertSignature) {
+      lastTurnAlertSignature = signature;
+      el.turnAlertText.textContent =
+        game.phase === "bet1"
+          ? "第一轮下注轮到你"
+          : "第二轮下注轮到你";
+      document.title = "● 轮到你 · 三皮牌局";
+      playSound("turn");
+      if ("vibrate" in navigator && prefs.sound) {
+        navigator.vibrate([120, 70, 120]);
+      }
+    }
+  }
+
   function actorName() {
     const actor = Engine.currentActor(game);
     return actor ? actor.name : "";
@@ -889,6 +934,7 @@
     el.waitingControls.hidden = true;
     el.resultPanel.hidden = Boolean(localPresentation) || game.phase !== "complete";
     el.readyArea.hidden = game.phase !== "ready";
+    el.localEarlyFoldButton.hidden = true;
 
     if (game.phase === "ready") {
       el.turnEyebrow.textContent = "等待开局";
@@ -943,6 +989,7 @@
     }
 
     el.waitingControls.hidden = false;
+    el.localEarlyFoldButton.hidden = !Engine.getEarlyFoldEligibility(game, 0);
     if (human.folded) {
       el.turnEyebrow.textContent = "旁观本手";
       el.turnTitle.textContent = "你已弃牌";
@@ -1192,6 +1239,7 @@
     renderSeats();
     renderCenter();
     renderTurnPanel();
+    renderTurnAlert();
     renderResults();
     renderLocalEquity();
     applyPreferenceUi();
@@ -1425,6 +1473,10 @@
     } else if (kind === "result") {
       playTone(392, 0.15, 0.017, "sine");
       window.setTimeout(() => playTone(523, 0.18, 0.018, "sine"), 120);
+    } else if (kind === "turn") {
+      playTone(523, 0.1, 0.02, "triangle");
+      window.setTimeout(() => playTone(659, 0.13, 0.018, "triangle"), 90);
+      window.setTimeout(() => playTone(784, 0.16, 0.014, "triangle"), 180);
     }
   }
 
@@ -1567,6 +1619,29 @@
     el.soundToggle.addEventListener("click", toggleSound);
     el.motionToggle.addEventListener("click", toggleMotion);
     el.speedToggle.addEventListener("click", toggleSpeed);
+    el.goToActionButton.addEventListener("click", () => {
+      document
+        .querySelector(".action-dock")
+        ?.scrollIntoView({ behavior: prefs.motion ? "smooth" : "auto", block: "center" });
+    });
+    el.localEarlyFoldButton.addEventListener("click", () => {
+      if (
+        !window.confirm("确定提前弃牌吗？弃牌后不能撤回。") ||
+        !Engine.getEarlyFoldEligibility(game, 0)
+      ) {
+        return;
+      }
+      try {
+        Engine.performEarlyFold(game, 0);
+        persist();
+        renderAll();
+        if (game.phase === "complete") {
+          playResultSound();
+        }
+      } catch (error) {
+        showToast(error.message || "当前不能提前弃牌。");
+      }
+    });
 
     el.foldButton.addEventListener("click", () => {
       performHumanAction({ type: "fold" });

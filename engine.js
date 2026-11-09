@@ -315,6 +315,9 @@
         mode === "online" ? opts.onlinePlayers || [] : null
       ),
       deck: [],
+      deckCycle: 0,
+      lastReshuffleHand: null,
+      reshuffledThisHand: false,
       discardCard: null,
       openerIndex: null,
       openingFallback: false,
@@ -518,7 +521,20 @@
       `第 ${state.handNo} 手开始，每人投入底注 ${state.config.ante}。`
     );
 
-    state.deck = shuffleInPlace(buildDeck(), state);
+    const requiredCards = remainingBeforeDeal.length * 3 + 1;
+    state.reshuffledThisHand =
+      !Array.isArray(state.deck) || state.deck.length < requiredCards;
+    if (state.reshuffledThisHand) {
+      state.deck = shuffleInPlace(buildDeck(), state);
+      state.deckCycle = (state.deckCycle || 0) + 1;
+      state.lastReshuffleHand = state.handNo;
+      addLog(
+        state,
+        "phase",
+        null,
+        `剩余牌堆不足 ${requiredCards} 张，统一收回两副牌并重新洗牌。`
+      );
+    }
     const dealOrder = seatOrder(
       state.players.length,
       (state.dealerIndex + 1) % state.players.length
@@ -692,7 +708,6 @@
       payChips(player, added);
       state.currentBet = target;
       state.minRaise = state.config.minBet;
-      state.actedThisRound = [playerIndex];
       player.lastAction =
         previousBet === 0 ? `下注 ${target}` : `加注到 ${target}`;
       addLog(state, "action", playerIndex, `${player.name} ${player.lastAction}。`);
@@ -703,13 +718,9 @@
       const before = player.roundContribution;
       const paid = payChips(player, player.stack);
       player.allIn = true;
-      state.actedThisRound = state.actedThisRound.filter(
-        (index) => index !== playerIndex
-      );
       if (player.roundContribution > state.currentBet) {
         state.currentBet = player.roundContribution;
         state.minRaise = state.config.minBet;
-        state.actedThisRound = [playerIndex];
       }
       player.lastAction = `全下 ${paid}`;
       addLog(
@@ -729,6 +740,42 @@
     }
     contributionAction(state, "");
     settleAfterAction(state, playerIndex);
+    return state;
+  }
+
+  function getEarlyFoldEligibility(state, playerIndex) {
+    const player = state.players[playerIndex];
+    if (
+      !player ||
+      !["bet1", "bet2"].includes(state.phase) ||
+      player.eliminated ||
+      player.folded ||
+      player.allIn ||
+      !player.holeCard ||
+      !player.upCard
+    ) {
+      return false;
+    }
+    if (state.phase === "bet2" && !player.drawCard) {
+      return false;
+    }
+    return !state.actedThisRound.includes(playerIndex);
+  }
+
+  function performEarlyFold(state, playerIndex) {
+    if (!getEarlyFoldEligibility(state, playerIndex)) {
+      throw new Error("当前不能提前弃牌。");
+    }
+    if (state.actorIndex === playerIndex) {
+      return performAction(state, { type: "fold" });
+    }
+    const player = state.players[playerIndex];
+    player.folded = true;
+    player.lastAction = "提前弃牌";
+    addLog(state, "action", playerIndex, `${player.name} 提前弃牌。`);
+    if (aliveIndices(state.players).length <= 1) {
+      completeHand(state, "其他玩家均已弃牌");
+    }
     return state;
   }
 
@@ -1505,6 +1552,8 @@
     startNextHand,
     getLegalActions,
     performAction,
+    getEarlyFoldEligibility,
+    performEarlyFold,
     evaluateHand,
     compareEvaluations,
     findOpeningPlayer,

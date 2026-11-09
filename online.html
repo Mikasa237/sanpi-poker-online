@@ -11,8 +11,8 @@
       content="三皮牌局联机房间：创建链接，邀请最多十名好友实时对战。"
     />
     <title>三皮牌局 · 联机</title>
-    <link rel="stylesheet" href="/styles.css?v=6" />
-    <link rel="stylesheet" href="/online.css?v=6" />
+    <link rel="stylesheet" href="/styles.css?v=7" />
+    <link rel="stylesheet" href="/online.css?v=7" />
   </head>
   <body class="online-body">
     <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -43,6 +43,21 @@
           </div>
 
           <div class="entry-card">
+            <div id="hostPortalPanel" class="host-portal-panel" hidden>
+              <p class="section-kicker">永久房主入口</p>
+              <h2>保存一次，随时开房</h2>
+              <p>这个链接不依赖你的电脑开机。以后直接从它进入并创建新房间。</p>
+              <button id="createHostLinkButton" class="secondary-button" type="button">
+                生成永久房主链接
+              </button>
+              <div id="hostLinkResult" class="host-link-result" hidden>
+                <input id="hostLinkInput" readonly />
+                <button id="copyHostLinkButton" class="primary-button" type="button">
+                  复制房主链接
+                </button>
+              </div>
+              <p id="hostLinkError" class="entry-error" role="alert" hidden></p>
+            </div>
             <div id="createRoomPanel">
               <p class="section-kicker">创建联机房</p>
               <h2>开一张新桌</h2>
@@ -64,7 +79,7 @@
                     <div id="createAvatarPreview" class="profile-avatar-preview"></div>
                     <label class="upload-button">
                       上传图片
-                      <input id="createAvatarFile" type="file" accept="image/png,image/jpeg,image/webp" />
+                      <input id="createAvatarFile" type="file" accept="image/png,image/x-png,image/apng,image/jpeg,image/webp,.png,.apng,.jpg,.jpeg,.webp" />
                     </label>
                   </div>
                   <div id="createPresetAvatars" class="avatar-preset-grid"></div>
@@ -110,7 +125,7 @@
                     <div id="joinAvatarPreview" class="profile-avatar-preview"></div>
                     <label class="upload-button">
                       上传图片
-                      <input id="joinAvatarFile" type="file" accept="image/png,image/jpeg,image/webp" />
+                      <input id="joinAvatarFile" type="file" accept="image/png,image/x-png,image/apng,image/jpeg,image/webp,.png,.apng,.jpg,.jpeg,.webp" />
                     </label>
                   </div>
                   <div id="joinPresetAvatars" class="avatar-preset-grid"></div>
@@ -125,6 +140,7 @@
             <p class="entry-note">
               房间没有密码。任何拿到链接的人都能申请加入，同一个房间内昵称不能重复。
             </p>
+            <a class="back-link host-entry-link" href="/host">永久房主入口 →</a>
           </div>
         </div>
       </section>
@@ -195,12 +211,16 @@
                 <p id="hostHint">至少需要两名在座玩家才能开局。</p>
                 <div id="lobbyStakeSettings" class="stake-settings">
                   <label class="online-field compact-field">
+                    <span>每人本钱（100–100000）</span>
+                    <input id="lobbyStartingChipsInput" type="number" min="100" max="100000" step="100" value="1000" />
+                  </label>
+                  <label class="online-field compact-field">
                     <span>底注（5–100）</span>
                     <input id="lobbyAnteInput" type="number" min="5" max="100" step="5" value="10" />
                   </label>
                   <label class="online-field compact-field">
                     <span>单注封顶（0 为无上限）</span>
-                    <input id="lobbyBetCapInput" type="number" min="0" max="1000" step="10" value="0" />
+                    <input id="lobbyBetCapInput" type="number" min="0" max="100000" step="10" value="0" />
                   </label>
                   <button id="saveStakeSettingsButton" class="secondary-button" type="button">
                     保存开局设置
@@ -258,6 +278,11 @@
               </div>
               <p id="onlineTableHint" class="table-hint">等待房主开始</p>
               <div id="onlineMiniLog" class="mini-log"></div>
+            </div>
+            <div id="onlineTurnAlert" class="turn-alert" hidden role="status" aria-live="assertive">
+              <strong>轮到你行动</strong>
+              <span id="onlineTurnAlertText">请选择本回合操作</span>
+              <button id="onlineGoToActionButton" type="button">去操作</button>
             </div>
           </section>
 
@@ -317,6 +342,9 @@
               <button id="hostSkipButton" class="danger-ghost compact-action" type="button" hidden>
                 跳过当前玩家
               </button>
+              <button id="onlineEarlyFoldButton" class="early-fold-button" type="button" hidden>
+                提前弃牌
+              </button>
             </section>
 
             <section id="onlineResultPanel" class="result-panel" hidden aria-live="polite">
@@ -353,12 +381,16 @@
               </div>
               <div id="nextMatchSettings" class="stake-settings" hidden>
                 <label class="online-field compact-field">
+                  <span>下一局每人本钱</span>
+                  <input id="nextStartingChipsInput" type="number" min="100" max="100000" step="100" value="1000" />
+                </label>
+                <label class="online-field compact-field">
                   <span>下一局底注</span>
                   <input id="nextAnteInput" type="number" min="5" max="100" step="5" value="10" />
                 </label>
                 <label class="online-field compact-field">
                   <span>下一局单注封顶</span>
-                  <input id="nextBetCapInput" type="number" min="0" max="1000" step="10" value="0" />
+                  <input id="nextBetCapInput" type="number" min="0" max="100000" step="10" value="0" />
                 </label>
                 <button id="applyNextSettingsButton" class="secondary-button" type="button">
                   保存下一局设置
@@ -449,7 +481,7 @@
             <div id="renameAvatarPreview" class="profile-avatar-preview"></div>
             <label class="upload-button">
               上传图片
-              <input id="renameAvatarFile" type="file" accept="image/png,image/jpeg,image/webp" />
+              <input id="renameAvatarFile" type="file" accept="image/png,image/x-png,image/apng,image/jpeg,image/webp,.png,.apng,.jpg,.jpeg,.webp" />
             </label>
           </div>
           <div id="renamePresetAvatars" class="avatar-preset-grid"></div>
@@ -483,7 +515,7 @@
 
     <div id="onlineToast" class="toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="/engine.js?v=6"></script>
-    <script src="/online.js?v=6"></script>
+    <script src="/engine.js?v=7"></script>
+    <script src="/online.js?v=7"></script>
   </body>
 </html>
