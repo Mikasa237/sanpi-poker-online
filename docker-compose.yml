@@ -1,8 +1,8 @@
 services:
   sanpi-poker:
     build:
-      context: ./outputs
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: outputs/Dockerfile
     ports:
       - "3000:3000"
     environment:
