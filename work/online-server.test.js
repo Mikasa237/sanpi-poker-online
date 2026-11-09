@@ -5,6 +5,8 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const { WebSocket } = require("../outputs/node_modules/ws");
 const Engine = require("../outputs/engine.js");
+process.env.SESSION_SECRET ||= "test-session-secret";
+process.env.HOST_ISSUE_SECRET ||= "test-host-issue-secret";
 const { createGameServer } = require("../outputs/server.js");
 
 async function startServer(options = {}) {
@@ -30,10 +32,10 @@ async function startServer(options = {}) {
   };
 }
 
-async function request(baseUrl, route, body) {
+async function request(baseUrl, route, body, headers = {}) {
   const response = await fetch(`${baseUrl}${route}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body || {})
   });
   const payload = await response.json();
@@ -709,6 +711,47 @@ test("room chat, quick phrases, emotes and host moderation work", async (t) => {
   guestClient.close();
 });
 
+test("quick phrase ids and local voice assets are served", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const room = await createRoom(server.baseUrl, "快捷语测试", 2);
+  const client = await createClient(
+    server.baseUrl,
+    room.roomCode,
+    room.token
+  );
+  client.send({
+    type: "chat:send",
+    kind: "quick",
+    phraseId: "hurry"
+  });
+  const message = await client.waitFor(
+    (entry) => entry.type === "room:chat" && entry.message?.kind === "quick"
+  );
+  assert.equal(message.message.phraseId, "hurry");
+  assert.match(message.message.text, /花儿都谢了/);
+
+  for (const phraseId of [
+    "hurry",
+    "call",
+    "think",
+    "nice",
+    "close",
+    "friendly",
+    "again",
+    "wow"
+  ]) {
+    const response = await fetch(
+      `${server.baseUrl}/assets/voice/quick-${phraseId}.mp3`
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "audio/mpeg");
+    assert.ok((await response.arrayBuffer()).byteLength > 1000);
+  }
+  client.close();
+});
+
 test("dealing presentation masks cards and blocks betting until finished", async (t) => {
   const server = await startServer({
     dealTimings: {
@@ -952,7 +995,14 @@ test("permanent host links verify and can create multiple rooms", async (t) => {
   const server = await startServer();
   t.after(() => server.app.close());
 
-  const created = await request(server.baseUrl, "/api/host-links", {});
+  const denied = await request(server.baseUrl, "/api/host-links", {});
+  assert.equal(denied.response.status, 401);
+  const created = await request(
+    server.baseUrl,
+    "/api/host-links",
+    {},
+    { "x-host-issue-secret": "test-host-issue-secret" }
+  );
   assert.equal(created.response.status, 201, created.payload.error);
   assert.match(created.payload.hostUrl, /\/host#owner=/);
   const verified = await request(server.baseUrl, "/api/host/verify", {
@@ -973,7 +1023,10 @@ test("permanent host links verify and can create multiple rooms", async (t) => {
 
   const page = await fetch(`${server.baseUrl}/host`);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /永久房主入口/);
+  const hostPage = await page.text();
+  assert.match(hostPage, /私密房主入口/);
+  assert.doesNotMatch(hostPage, /href="\/host"/);
+  assert.doesNotMatch(hostPage, /#owner=/);
 
   const restarted = await startServer();
   const afterRestart = await request(restarted.baseUrl, "/api/host/verify", {

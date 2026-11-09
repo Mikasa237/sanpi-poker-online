@@ -62,7 +62,15 @@ test("required output files are present and non-empty", () => {
     "package-lock.json",
     "assets/joker-color.svg",
     "assets/joker-mono.svg",
-    "assets/wildcard.svg"
+    "assets/wildcard.svg",
+    "assets/voice/quick-hurry.mp3",
+    "assets/voice/quick-call.mp3",
+    "assets/voice/quick-think.mp3",
+    "assets/voice/quick-nice.mp3",
+    "assets/voice/quick-close.mp3",
+    "assets/voice/quick-friendly.mp3",
+    "assets/voice/quick-again.mp3",
+    "assets/voice/quick-wow.mp3"
   ].forEach(
     (filename) => {
       const stats = fs.statSync(path.join(root, filename));
@@ -75,4 +83,10 @@ test("special card illustrations are referenced by the renderer", () => {
   assert.match(app, /assets\/joker-color\.svg/);
   assert.match(app, /assets\/joker-mono\.svg/);
   assert.match(app, /assets\/wildcard\.svg/);
+});
+
+test("quick phrase voice pack is referenced without remote runtime assets", () => {
+  assert.match(onlineApp, /quick-hurry\.mp3/);
+  assert.match(onlineApp, /quick-wow\.mp3/);
+  assert.doesNotMatch(onlineApp, /https?:\/\/[^"']+\.mp3/);
 });
