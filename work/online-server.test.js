@@ -1105,49 +1105,6 @@ test("rewind consent reveals only the approved hole card and revives on a win", 
   ghostClient.close();
 });
 
-test("voice state and signaling are restricted to eligible room members", async (t) => {
-  const server = await startServer();
-  t.after(() => server.app.close());
-
-  const hostRoom = await createRoom(server.baseUrl, "语音房主", 2);
-  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "语音访客");
-  const hostClient = await createClient(
-    server.baseUrl,
-    hostRoom.roomCode,
-    hostRoom.token
-  );
-  const guestClient = await createClient(
-    server.baseUrl,
-    hostRoom.roomCode,
-    guestJoin.payload.token
-  );
-  hostClient.send({ type: "voice:state", active: true });
-  guestClient.send({ type: "voice:state", active: true });
-  const voiceState = await hostClient.waitFor(
-    (message) =>
-      message.room?.users?.filter((user) => user.voiceActive).length === 2
-  );
-  assert.equal(voiceState.room.voice.canJoin, true);
-  hostClient.send({
-    type: "voice:signal",
-    targetId: guestJoin.payload.userId,
-    signal: { type: "description", description: { type: "offer", sdp: "x" } }
-  });
-  const signal = await guestClient.waitFor(
-    (message) => message.type === "voice:signal"
-  );
-  assert.equal(signal.fromId, hostRoom.userId);
-  assert.equal(signal.signal.description.type, "offer");
-  hostClient.send({ type: "voice:state", active: false });
-  await guestClient.waitFor(
-    (message) =>
-      message.room?.users?.find((user) => user.id === hostRoom.userId)
-        ?.voiceActive === false
-  );
-  hostClient.close();
-  guestClient.close();
-});
-
 test("permanent host links verify and can create multiple rooms", async (t) => {
   const server = await startServer();
   t.after(() => server.app.close());

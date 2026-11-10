@@ -127,16 +127,6 @@
     voiceCache: new Map(),
     audioContext: null,
     rewindTickTimer: null,
-    voiceJoined: false,
-    voiceMicEnabled: true,
-    voiceLocalStream: null,
-    voicePeers: new Map(),
-    voiceAnalysers: new Map(),
-    voiceAudioContext: null,
-    voiceMutedUsers: new Set(),
-    voiceSpeakingUsers: new Set(),
-    voiceMeterTimer: null,
-    voiceIceServers: [{ urls: "stun:stun.cloudflare.com:3478" }]
   };
 
   const el = {};
@@ -170,7 +160,6 @@
     "onlineSoundToggle",
     "onlineMotionToggle",
     "rulesButton",
-    "voiceButton",
     "mobileToolsButton",
     "leaveRoomButton",
     "lobbyArea",
@@ -279,13 +268,6 @@
     "mobileRulesButton",
     "mobileLeaveButton",
     "mobileToolsBackdrop",
-    "voicePanel",
-    "voiceStatusText",
-    "voiceJoinButton",
-    "voiceMicButton",
-    "voiceLeaveButton",
-    "voiceParticipants",
-    "voiceError",
     "equityTab",
     "chatTab",
     "chatUnreadBadge",
@@ -881,8 +863,6 @@
         handleIncomingChat(message.message);
       } else if (message.type === "room:emote") {
         animateIncomingEmote(message.message);
-      } else if (message.type === "voice:signal") {
-        handleVoiceSignal(message.fromId, message.signal);
       } else if (message.type === "room:chat-history") {
         if (state.room?.chat) {
           state.room.chat.messages = message.messages;
@@ -903,7 +883,6 @@
       if (state.intentionalClose) {
         return;
       }
-      leaveVoice(false);
       if (event.code === 4001) {
         state.intentionalClose = true;
         setConnection("reconnecting", "已被新页面接管");
@@ -2112,306 +2091,6 @@
     }
   }
 
-  function renderVoice(room) {
-    const voice = room?.voice;
-    if (!voice) {
-      el.voicePanel.hidden = true;
-      el.voiceButton.hidden = true;
-      return;
-    }
-    state.voiceIceServers = voice.iceServers || state.voiceIceServers;
-    el.voiceButton.hidden = !voice.canJoin;
-    el.voiceButton.textContent = state.voiceJoined ? "语音中" : "语音";
-    el.voiceButton.classList.toggle("is-voice-active", state.voiceJoined);
-    el.voicePanel.hidden = !voice.canJoin;
-    el.voiceJoinButton.hidden = state.voiceJoined;
-    el.voiceMicButton.hidden = !state.voiceJoined;
-    el.voiceLeaveButton.hidden = !state.voiceJoined;
-    el.voiceMicButton.textContent = state.voiceMicEnabled
-      ? "关闭麦克风"
-      : "打开麦克风";
-    el.voiceStatusText.textContent = state.voiceJoined
-      ? state.voiceMicEnabled
-        ? "已加入 · 自由开麦"
-        : "已加入 · 麦克风关闭"
-      : "未加入语音";
-
-    const participants = room.users.filter(
-      (user) =>
-        user.voiceActive ||
-        (user.isSelf && state.voiceJoined)
-    );
-    el.voiceParticipants.innerHTML = participants.length
-      ? participants
-          .map((user) => {
-            const muted = state.voiceMutedUsers.has(user.id);
-            const speaking =
-              state.voiceSpeakingUsers.has(user.id) && !muted;
-            return `
-              <div class="voice-participant ${
-                speaking ? "is-speaking" : ""
-              }" data-voice-user="${escapeHtml(user.id)}">
-                ${avatarMarkup(user.avatarUrl)}
-                <div>
-                  <strong>${escapeHtml(user.name)}${
-                    user.isSelf ? "（你）" : ""
-                  }</strong>
-                  <span>${
-                    user.isSelf && !state.voiceMicEnabled
-                      ? "麦克风关闭"
-                      : muted
-                        ? "已本地静音"
-                        : speaking
-                          ? "正在说话"
-                          : "在语音"
-                  }</span>
-                </div>
-                ${
-                  user.isSelf
-                    ? ""
-                    : `<button type="button" class="text-button" data-voice-mute="${escapeHtml(
-                        user.id
-                      )}">${muted ? "取消静音" : "本地静音"}</button>`
-                }
-              </div>`;
-          })
-          .join("")
-      : '<p class="voice-empty">点击“加入语音”开始交流。</p>';
-  }
-
-  async function joinVoice() {
-    if (state.voiceJoined) {
-      return;
-    }
-    el.voiceError.hidden = true;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        },
-        video: false
-      });
-      state.voiceLocalStream = stream;
-      state.voiceJoined = true;
-      state.voiceMicEnabled = true;
-      monitorVoiceStream("self", stream);
-      sendMessage({ type: "voice:state", active: true });
-      await syncVoicePeers();
-      renderVoice(state.room);
-    } catch (error) {
-      el.voiceError.textContent =
-        error?.name === "NotAllowedError"
-          ? "麦克风权限被拒绝，请在浏览器设置中允许后重试。"
-          : "无法打开麦克风，请检查设备或网络。";
-      el.voiceError.hidden = false;
-    }
-  }
-
-  function closeVoicePeer(userId) {
-    const peer = state.voicePeers.get(userId);
-    peer?.close();
-    state.voicePeers.delete(userId);
-    state.voiceAnalysers.delete(userId);
-    state.voiceSpeakingUsers.delete(userId);
-  }
-
-  async function leaveVoice(notify = true) {
-    if (notify && state.voiceJoined) {
-      sendMessage({ type: "voice:state", active: false });
-    }
-    state.voiceJoined = false;
-    state.voiceMicEnabled = true;
-    state.voiceLocalStream?.getTracks().forEach((track) => track.stop());
-    state.voiceLocalStream = null;
-    Array.from(state.voicePeers.keys()).forEach(closeVoicePeer);
-    state.voiceSpeakingUsers.clear();
-    clearInterval(state.voiceMeterTimer);
-    state.voiceMeterTimer = null;
-    renderVoice(state.room);
-  }
-
-  function toggleVoiceMic() {
-    state.voiceMicEnabled = !state.voiceMicEnabled;
-    state.voiceLocalStream
-      ?.getAudioTracks()
-      .forEach((track) => {
-        track.enabled = state.voiceMicEnabled;
-      });
-    renderVoice(state.room);
-  }
-
-  function ensureVoicePeer(remoteId, initiator = false) {
-    if (state.voicePeers.has(remoteId)) {
-      return state.voicePeers.get(remoteId).pc;
-    }
-    if (!window.RTCPeerConnection || !state.voiceJoined) {
-      return null;
-    }
-    const pc = new RTCPeerConnection({
-      iceServers: state.voiceIceServers
-    });
-    const peer = { pc };
-    state.voicePeers.set(remoteId, peer);
-    state.voiceLocalStream
-      ?.getTracks()
-      .forEach((track) => pc.addTrack(track, state.voiceLocalStream));
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        sendMessage({
-          type: "voice:signal",
-          targetId: remoteId,
-          signal: { type: "candidate", candidate: event.candidate }
-        });
-      }
-    };
-    pc.ontrack = (event) => {
-      monitorVoiceStream(remoteId, event.streams[0]);
-    };
-    pc.onconnectionstatechange = () => {
-      if (["failed", "closed"].includes(pc.connectionState)) {
-        closeVoicePeer(remoteId);
-      }
-    };
-    if (initiator) {
-      pc.createOffer()
-        .then((offer) => pc.setLocalDescription(offer))
-        .then(() =>
-          sendMessage({
-            type: "voice:signal",
-            targetId: remoteId,
-            signal: { type: "description", description: pc.localDescription }
-          })
-        )
-        .catch(() => closeVoicePeer(remoteId));
-    }
-    return pc;
-  }
-
-  async function syncVoicePeers() {
-    const room = state.room;
-    if (!room) {
-      return;
-    }
-    if (!state.voiceJoined) {
-      Array.from(state.voicePeers.keys()).forEach(closeVoicePeer);
-      return;
-    }
-    const activeIds = new Set(
-      room.users
-        .filter((user) => !user.isSelf && user.voiceActive)
-        .map((user) => user.id)
-    );
-    Array.from(state.voicePeers.keys()).forEach((userId) => {
-      if (!activeIds.has(userId)) {
-        closeVoicePeer(userId);
-      }
-    });
-    activeIds.forEach((userId) => {
-      const shouldOffer = room.self.id.localeCompare(userId) < 0;
-      ensureVoicePeer(userId, shouldOffer);
-    });
-  }
-
-  async function handleVoiceSignal(fromId, signal) {
-    if (!signal || !state.voiceJoined) {
-      return;
-    }
-    const pc = ensureVoicePeer(
-      fromId,
-      false
-    );
-    if (!pc) {
-      return;
-    }
-    try {
-      if (signal.type === "description") {
-        await pc.setRemoteDescription(signal.description);
-        if (signal.description?.type === "offer") {
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          sendMessage({
-            type: "voice:signal",
-            targetId: fromId,
-            signal: { type: "description", description: pc.localDescription }
-          });
-        }
-      } else if (signal.type === "candidate" && signal.candidate) {
-        await pc.addIceCandidate(signal.candidate);
-      }
-    } catch {
-      closeVoicePeer(fromId);
-    }
-  }
-
-  function monitorVoiceStream(userId, stream) {
-    if (!stream || !window.AudioContext) {
-      return;
-    }
-    if (!state.voiceAudioContext) {
-      state.voiceAudioContext = new AudioContext();
-    }
-    const context = state.voiceAudioContext;
-    const source = context.createMediaStreamSource(stream);
-    const analyser = context.createAnalyser();
-    analyser.fftSize = 512;
-    const gain = context.createGain();
-    gain.gain.value = state.voiceMutedUsers.has(userId) ? 0 : 1;
-    source.connect(analyser);
-    if (userId !== "self") {
-      analyser.connect(gain);
-      gain.connect(context.destination);
-    }
-    state.voiceAnalysers.set(userId, {
-      analyser,
-      gain,
-      source,
-      data: new Uint8Array(analyser.frequencyBinCount)
-    });
-    if (!state.voiceMeterTimer) {
-      state.voiceMeterTimer = setInterval(updateVoiceMeters, 240);
-    }
-  }
-
-  function updateVoiceMeters() {
-    let changed = false;
-    state.voiceAnalysers.forEach((entry, userId) => {
-      entry.analyser.getByteTimeDomainData(entry.data);
-      let sum = 0;
-      for (const value of entry.data) {
-        const normalized = (value - 128) / 128;
-        sum += normalized * normalized;
-      }
-      const speaking = Math.sqrt(sum / entry.data.length) > 0.045;
-      const had = state.voiceSpeakingUsers.has(userId);
-      if (speaking !== had) {
-        if (speaking) {
-          state.voiceSpeakingUsers.add(userId);
-        } else {
-          state.voiceSpeakingUsers.delete(userId);
-        }
-        changed = true;
-      }
-    });
-    if (changed) {
-      renderVoice(state.room);
-    }
-  }
-
-  function toggleLocalVoiceMute(userId) {
-    if (state.voiceMutedUsers.has(userId)) {
-      state.voiceMutedUsers.delete(userId);
-    } else {
-      state.voiceMutedUsers.add(userId);
-    }
-    const entry = state.voiceAnalysers.get(userId);
-    if (entry) {
-      entry.gain.gain.value = state.voiceMutedUsers.has(userId) ? 0 : 1;
-    }
-    renderVoice(state.room);
-  }
-
   function updateOnlineRaiseDisplay() {
     el.onlineRaiseValue.textContent = formatNumber(
       Number(el.onlineRaiseSlider.value)
@@ -2914,8 +2593,6 @@
     el.transferHostButton.disabled =
       !room.users.some((user) => user.id !== room.self.id && user.connected);
     renderChat();
-    renderVoice(room);
-    syncVoicePeers();
   }
 
   function renderGame() {
@@ -2935,8 +2612,6 @@
     renderHostControls();
     renderEquity(game);
     renderChat();
-    renderVoice(room);
-    syncVoicePeers();
     renderOnlineTurnAlert();
     const remaining = game.players.filter((player) => !player.eliminated).length;
     el.onlineRemainingText.textContent = `剩余 ${remaining} 人`;
@@ -3163,24 +2838,6 @@
     el.mobileLeaveButton.addEventListener("click", leaveRoom);
     el.onlineSoundToggle.addEventListener("click", toggleSoundPreference);
     el.onlineMotionToggle.addEventListener("click", toggleMotionPreference);
-    el.voiceButton.addEventListener("click", () => {
-      if (window.matchMedia("(max-width: 720px)").matches) {
-        setMobileToolsOpen(true);
-      }
-      el.voicePanel.scrollIntoView({
-        behavior: prefsMotion() ? "smooth" : "auto",
-        block: "center"
-      });
-    });
-    el.voiceJoinButton.addEventListener("click", joinVoice);
-    el.voiceMicButton.addEventListener("click", toggleVoiceMic);
-    el.voiceLeaveButton.addEventListener("click", () => leaveVoice(true));
-    el.voiceParticipants.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-voice-mute]");
-      if (button) {
-        toggleLocalVoiceMute(button.dataset.voiceMute);
-      }
-    });
     el.equityTab.addEventListener("click", () => setSocialTab("equity"));
     el.chatTab.addEventListener("click", () => setSocialTab("chat"));
     el.chatLocalMuteButton.addEventListener("click", toggleLocalChatMute);
