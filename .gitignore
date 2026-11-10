@@ -3,5 +3,6 @@ work/*
 !work/online-server.test.js
 !work/ui-smoke.test.js
 !work/identity-orientation-smoke.js
+outputs/work/
 .env
 *.log

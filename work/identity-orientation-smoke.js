@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const { chromium } = require("./browser-tools/node_modules/playwright-core");
 
 process.env.SESSION_SECRET = "identity-orientation-test-secret";
@@ -8,6 +9,7 @@ process.env.HOST_ISSUE_SECRET = "identity-orientation-host-secret";
 const { createGameServer } = require("../outputs/server.js");
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const SCREENSHOT_ROOT = __dirname;
 let BASE = "";
 let runningApp = null;
 let runningBrowser = null;
@@ -84,7 +86,10 @@ async function main() {
     await page.locator("#identityTitle").textContent(),
     "设置这台设备的身份"
   );
-  await page.screenshot({ path: "work/identity-gate.png", fullPage: false });
+  await page.screenshot({
+    path: path.join(SCREENSHOT_ROOT, "identity-gate.png"),
+    fullPage: false
+  });
 
   await page.locator("#identityPin").fill("052816");
   await page.locator("#createName").fill("本机甲");
@@ -216,7 +221,7 @@ async function main() {
   );
   await page.locator("#orientationPrompt").waitFor({ state: "visible" });
   await page.screenshot({
-    path: "work/orientation-prompt.png",
+    path: path.join(SCREENSHOT_ROOT, "orientation-prompt.png"),
     fullPage: false
   });
 
@@ -237,7 +242,7 @@ async function main() {
   assert.ok(landscape.tableHeight > 250);
   assert.equal(landscape.actionVisible, true);
   await page.screenshot({
-    path: "work/identity-orientation-landscape.png",
+    path: path.join(SCREENSHOT_ROOT, "identity-orientation-landscape.png"),
     fullPage: false
   });
 
