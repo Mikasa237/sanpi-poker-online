@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="640" viewBox="0 0 900 640" role="img" aria-labelledby="title desc">
+  <title id="title">三皮牌局固定入口</title>
+  <desc id="desc">自动连接当前正在运行的三皮牌局。</desc>
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#247456"/>
+      <stop offset="55%" stop-color="#0b2b20"/>
+      <stop offset="100%" stop-color="#061a13"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f4d97d"/>
+      <stop offset="100%" stop-color="#b67a31"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect width="900" height="640" fill="url(#glow)"/>
+  <rect x="165" y="76" width="570" height="488" rx="38" fill="#09271d" stroke="#ddbd64" stroke-opacity="0.55" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="380" y="124" width="140" height="140" rx="34" fill="url(#gold)"/>
+  <text x="450" y="222" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="78" font-weight="900" fill="#251b08">三</text>
+  <text x="450" y="326" text-anchor="middle" font-family="Songti SC, serif" font-size="54" font-weight="700" letter-spacing="8" fill="#f2f8f4">三皮牌局</text>
+  <text id="status" x="450" y="378" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="20" fill="#a9c8ba">正在连接当前牌桌…</text>
+  <a id="enter" href="https://github.com/Mikasa237/sanpi-poker-online" target="_top">
+    <rect x="297" y="420" width="306" height="64" rx="16" fill="url(#gold)"/>
+    <text x="450" y="461" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="21" font-weight="800" fill="#211807">进入牌桌</text>
+  </a>
+  <text x="450" y="526" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="14" fill="#779688">固定入口不会变化 · 电脑开机联网后自动恢复</text>
+  <script><![CDATA[
+    (() => {
+      const RAW_URL =
+        "https://raw.githubusercontent.com/Mikasa237/sanpi-poker-online/main/tunnel.json";
+      const CDN_URL =
+        "https://cdn.jsdelivr.net/gh/Mikasa237/sanpi-poker-online@main/tunnel.json";
+      const status = document.getElementById("status");
+      const enter = document.getElementById("enter");
+
+      async function fetchJson(url, timeoutMs = 6000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(`${url}?t=${Date.now()}`, {
+            cache: "no-store",
+            signal: controller.signal
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return await response.json();
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      function targetFor(baseUrl) {
+        const base = String(baseUrl || "").replace(/\/+$/, "");
+        const hash = location.hash.startsWith("#owner=") ? location.hash : "";
+        return hash ? `${base}/host${hash}` : `${base}/online.html`;
+      }
+
+      async function healthCheck(baseUrl) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 7000);
+        try {
+          const response = await fetch(`${baseUrl}/api/health?t=${Date.now()}`, {
+            cache: "no-store",
+            signal: controller.signal
+          });
+          if (!response.ok) return false;
+          const health = await response.json();
+          return health.ok === true;
+        } catch {
+          return false;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function connect() {
+        try {
+          let runtime;
+          try {
+            runtime = await fetchJson(RAW_URL);
+          } catch {
+            runtime = await fetchJson(CDN_URL);
+          }
+          const baseUrl = String(runtime.url || "").replace(/\/+$/, "");
+          if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i.test(baseUrl)) {
+            throw new Error("当前牌桌地址尚未发布");
+          }
+          const target = targetFor(baseUrl);
+          enter.setAttribute("href", target);
+          if (!(await healthCheck(baseUrl))) {
+            throw new Error("电脑端牌桌尚未就绪");
+          }
+          status.textContent = "已连接，正在进入…";
+          location.replace(target);
+        } catch {
+          status.textContent = "牌桌暂时离线，请确认电脑已开机联网";
+          enter.setAttribute(
+            "href",
+            "https://github.com/Mikasa237/sanpi-poker-online"
+          );
+        }
+      }
+
+      connect();
+    })();
+  ]]></script>
+</svg>
