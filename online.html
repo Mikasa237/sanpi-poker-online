@@ -153,7 +153,6 @@
             <button id="onlineSoundToggle" class="icon-button" type="button" aria-pressed="true" title="声音开关">♪</button>
             <button id="onlineMotionToggle" class="icon-button" type="button" aria-pressed="true" title="动画开关">◌</button>
             <button id="rulesButton" class="ghost-button" type="button">规则</button>
-            <button id="voiceButton" class="ghost-button" type="button" aria-expanded="false" aria-controls="voicePanel">语音</button>
             <button id="mobileToolsButton" class="ghost-button mobile-tools-button" type="button" aria-expanded="false" aria-controls="onlineMoreTools">
               工具
             </button>
@@ -422,22 +421,6 @@
                 </div>
                 <button id="mobileToolsCloseButton" class="icon-button" type="button" aria-label="关闭工具">×</button>
               </header>
-
-              <section id="voicePanel" class="voice-panel" hidden aria-live="polite">
-                <div class="voice-panel-heading">
-                  <div>
-                    <span class="section-kicker">实时语音</span>
-                    <strong id="voiceStatusText">未加入语音</strong>
-                  </div>
-                  <button id="voiceJoinButton" class="primary-button" type="button">加入语音</button>
-                </div>
-                <div class="voice-actions">
-                  <button id="voiceMicButton" class="secondary-button" type="button" hidden>关闭麦克风</button>
-                  <button id="voiceLeaveButton" class="secondary-button" type="button" hidden>退出语音</button>
-                </div>
-                <div id="voiceParticipants" class="voice-participants"></div>
-                <p id="voiceError" class="entry-error" role="alert" hidden></p>
-              </section>
 
               <section id="hostControls" class="host-controls online-host-controls">
                 <p class="section-kicker">房主控制</p>

@@ -21,19 +21,6 @@ const MAX_STORED_AVATAR_BYTES = 192 * 1024;
 const TOKEN_SECRET =
   process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 const HOST_ISSUE_SECRET = process.env.HOST_ISSUE_SECRET || "";
-const VOICE_ICE_SERVERS = (() => {
-  if (process.env.VOICE_ICE_SERVERS) {
-    try {
-      const parsed = JSON.parse(process.env.VOICE_ICE_SERVERS);
-      if (Array.isArray(parsed) && parsed.length) {
-        return parsed;
-      }
-    } catch {
-      // Fall back to the public STUN server below.
-    }
-  }
-  return [{ urls: "stun:stun.cloudflare.com:3478" }];
-})();
 const PUBLIC_FILES = new Set([
   "/index.html",
   "/online.html",
@@ -405,8 +392,7 @@ function createParticipant(room, name, joinedAt, avatarUrl) {
     lastEmoteAt: 0,
     rewindEligible: false,
     rewindStage: 0,
-    revivalsUsed: 0,
-    voiceActive: false
+    revivalsUsed: 0
   };
 }
 
@@ -1168,7 +1154,6 @@ function makeRoomView(room, participant) {
       rewindEligible: Boolean(entry.rewindEligible),
       rewindStage: entry.rewindStage || 0,
       revivalsUsed: entry.revivalsUsed || 0,
-      voiceActive: Boolean(entry.voiceActive),
       pendingSeatRelease: Boolean(entry.pendingSeatRelease),
       chatMuted: Boolean(entry.chatMuted)
     }));
@@ -1200,8 +1185,7 @@ function makeRoomView(room, participant) {
               eliminated: Boolean(entry.eliminated),
               rewindEligible: Boolean(entry.rewindEligible),
               rewindStage: entry.rewindStage || 0,
-              stack: Number.isFinite(entry.stack) ? entry.stack : null,
-              voiceActive: Boolean(entry.voiceActive)
+              stack: Number.isFinite(entry.stack) ? entry.stack : null
             }
           : null;
       }),
@@ -1209,13 +1193,6 @@ function makeRoomView(room, participant) {
       rewinders: users.filter((entry) => entry.rewindEligible),
       self: users.find((entry) => entry.id === participant.id),
       rewind: makeRewindView(room, participant),
-      voice: {
-        iceServers: VOICE_ICE_SERVERS,
-        canJoin: Boolean(
-          participant.seat !== null || participant.rewindEligible
-        ),
-        selfActive: Boolean(participant.voiceActive)
-      },
       chat: {
         enabled: room.chatEnabled,
         messages: room.chatMessages.slice(),
@@ -1525,7 +1502,6 @@ function createGameServer(options = {}) {
   }
 
   function removeParticipant(room, participant) {
-    participant.voiceActive = false;
     if (participant.socket) {
       participant.socket.close(4003, "left room");
       participant.socket = null;
@@ -1835,32 +1811,6 @@ function createGameServer(options = {}) {
     broadcast(room);
   }
 
-  function handleVoiceState(room, participant, message) {
-    if (participant.seat === null && !participant.rewindEligible) {
-      throw new RequestError(403, "只有在座玩家和回溯者可以加入语音。");
-    }
-    participant.voiceActive = Boolean(message.active);
-    broadcast(room);
-  }
-
-  function handleVoiceSignal(room, participant, message) {
-    if (!participant.voiceActive) {
-      throw new RequestError(403, "请先加入实时语音。");
-    }
-    const target = room.users.get(String(message.targetId || ""));
-    if (!target || !target.voiceActive || !target.socket) {
-      return;
-    }
-    if (!message.signal || typeof message.signal !== "object") {
-      throw new RequestError(400, "语音信令格式不正确。");
-    }
-    sendSocket(target.socket, {
-      type: "voice:signal",
-      fromId: participant.id,
-      signal: message.signal
-    });
-  }
-
   function handleSocketMessage(socket, raw) {
     let message;
     try {
@@ -1918,10 +1868,6 @@ function createGameServer(options = {}) {
         handleRewindSelect(room, participant, message);
       } else if (message.type === "rewind:respond") {
         handleRewindRespond(room, participant, message);
-      } else if (message.type === "voice:state") {
-        handleVoiceState(room, participant, message);
-      } else if (message.type === "voice:signal") {
-        handleVoiceSignal(room, participant, message);
       } else if (message.type === "chat:send") {
         handleChatMessage(room, participant, message);
       } else if (message.type === "emote:throw") {
@@ -2004,7 +1950,6 @@ function createGameServer(options = {}) {
       if (participant && participant.socket === socket) {
         participant.socket = null;
         participant.connected = false;
-        participant.voiceActive = false;
         touchRoom(room);
         broadcast(room);
       }
