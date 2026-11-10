@@ -7,6 +7,8 @@
   const AVATAR_KEY = "sanpi-online-avatar";
   const PREF_KEY = "sanpi-online-preferences";
   const HOST_TOKEN_KEY = "sanpi-online-host-token";
+  const IDENTITY_KEY = "sanpi-online-identity-v1";
+  const ORIENTATION_KEY = "sanpi-online-orientation";
   const QUICK_VOICE_FILES = Object.freeze({
     hurry: "/assets/voice/quick-hurry.mp3",
     call: "/assets/voice/quick-call.mp3",
@@ -108,6 +110,12 @@
       join: "preset:jester",
       rename: "preset:jester"
     },
+    identity: null,
+    identityUnlocked: false,
+    identityVerifyToken: 0,
+    pendingProfileUpdate: null,
+    orientation: "auto",
+    orientationFrame: null,
     preferences: {
       sound: true,
       motion: true,
@@ -143,6 +151,19 @@
     "createRoomButton",
     "joinName",
     "joinRoomButton",
+    "identityGate",
+    "identityTitle",
+    "identityBadge",
+    "identityHint",
+    "identityPinField",
+    "identityPin",
+    "identityProfilePreview",
+    "identityAvatarPreview",
+    "identityProfileName",
+    "identityError",
+    "resetIdentityButton",
+    "createProfileFields",
+    "joinProfileFields",
     "createAvatarPreview",
     "createAvatarFile",
     "createPresetAvatars",
@@ -160,6 +181,7 @@
     "onlineSoundToggle",
     "onlineMotionToggle",
     "rulesButton",
+    "mobileOrientationButton",
     "mobileToolsButton",
     "leaveRoomButton",
     "lobbyArea",
@@ -264,6 +286,7 @@
     "onlineStakesText",
     "onlineActionDock",
     "onlineMoreTools",
+    "orientationModeSelect",
     "mobileToolsCloseButton",
     "mobileRulesButton",
     "mobileLeaveButton",
@@ -301,6 +324,10 @@
     "closeRenameButton",
     "rulesDialog",
     "closeRulesButton",
+    "orientationPrompt",
+    "orientationPromptTitle",
+    "orientationPromptText",
+    "orientationAutoButton",
     "onlineToast"
   ];
 
@@ -329,6 +356,220 @@
 
   function tokenKey(code) {
     return `${TOKEN_PREFIX}${code}`;
+  }
+
+  function normalizeIdentityPin(value) {
+    return String(value || "").replace(/\D/g, "").slice(0, 6);
+  }
+
+  function identityPinIsValid(value) {
+    return /^\d{6}$/.test(String(value || ""));
+  }
+
+  function bytesToHex(bytes) {
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(
+      ""
+    );
+  }
+
+  function loadIdentityRecord() {
+    try {
+      const raw = localStorage.getItem(IDENTITY_KEY);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      if (
+        parsed?.version !== 1 ||
+        typeof parsed.name !== "string" ||
+        !parsed.name.trim() ||
+        typeof parsed.avatar !== "string" ||
+        typeof parsed.salt !== "string" ||
+        typeof parsed.pinHash !== "string"
+      ) {
+        return null;
+      }
+      return {
+        version: 1,
+        salt: parsed.salt,
+        pinHash: parsed.pinHash,
+        name: parsed.name.trim().slice(0, 12),
+        avatar: parsed.avatar || "preset:jester",
+        updatedAt: Number(parsed.updatedAt) || Date.now()
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function hashIdentityPin(pin, salt) {
+    if (!window.crypto?.subtle) {
+      throw new Error("当前浏览器不支持本地身份验证，请直接填写昵称和头像。");
+    }
+    const bytes = new TextEncoder().encode(`${salt}:${pin}`);
+    const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+    return bytesToHex(new Uint8Array(digest));
+  }
+
+  function persistIdentity(identity) {
+    state.identity = identity;
+    state.identityUnlocked = true;
+    try {
+      localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity));
+      localStorage.setItem(NAME_KEY, identity.name);
+      localStorage.setItem(AVATAR_KEY, identity.avatar);
+      return true;
+    } catch {
+      showToast("本机存储不可用，身份码这次可以使用，但刷新后需要重新设置。");
+      return false;
+    }
+  }
+
+  async function createIdentity(pin, name, avatar) {
+    const saltBytes = new Uint8Array(16);
+    window.crypto.getRandomValues(saltBytes);
+    const salt = bytesToHex(saltBytes);
+    return {
+      version: 1,
+      salt,
+      pinHash: await hashIdentityPin(pin, salt),
+      name,
+      avatar,
+      updatedAt: Date.now()
+    };
+  }
+
+  function setIdentityError(message) {
+    el.identityError.textContent = message || "";
+    el.identityError.hidden = !message;
+  }
+
+  function applyIdentityToDrafts(identity) {
+    state.draftAvatars.create = identity.avatar;
+    state.draftAvatars.join = identity.avatar;
+    state.draftAvatars.rename = identity.avatar;
+    el.createName.value = identity.name;
+    el.joinName.value = identity.name;
+    renderAvatarPickers();
+  }
+
+  function refreshIdentityUi() {
+    const hasIdentity = Boolean(state.identity);
+    const unlocked = !hasIdentity || state.identityUnlocked;
+    const pinValue = normalizeIdentityPin(el.identityPin?.value);
+    if (el.identityPin && el.identityPin.value !== pinValue) {
+      el.identityPin.value = pinValue;
+    }
+    el.identityTitle.textContent = !hasIdentity
+      ? "设置这台设备的身份"
+      : state.identityUnlocked
+        ? "本机身份已验证"
+        : "输入本机身份码";
+    el.identityBadge.textContent = hasIdentity
+      ? "仅保存在本机"
+      : "首次使用 · 请设置";
+    el.identityHint.textContent = !hasIdentity
+      ? "先设置 6 位数字身份码，再填写昵称和头像；成功进入房间后才会保存。"
+      : state.identityUnlocked
+        ? "昵称和头像已自动载入，无需重复填写。"
+        : "本机已保存身份，输入身份码即可恢复昵称和头像。";
+    el.identityPinField.hidden = Boolean(hasIdentity && state.identityUnlocked);
+    el.identityProfilePreview.hidden = !(
+      hasIdentity && state.identityUnlocked
+    );
+    el.resetIdentityButton.hidden = !hasIdentity || state.identityUnlocked;
+    el.createProfileFields.hidden = hasIdentity;
+    el.joinProfileFields.hidden = hasIdentity;
+    el.createName.required = !hasIdentity;
+    el.joinName.required = !hasIdentity;
+    el.createRoomButton.disabled = !unlocked || !payloadCanSubmit(pinValue);
+    el.joinRoomButton.disabled = !unlocked || !payloadCanSubmit(pinValue);
+    if (hasIdentity && state.identityUnlocked) {
+      el.identityProfileName.textContent = state.identity.name;
+      renderProfileAvatar(
+        el.identityAvatarPreview,
+        state.identity.avatar
+      );
+    }
+    refreshHostEntryVisibility();
+  }
+
+  function payloadCanSubmit(pinValue) {
+    return state.identity
+      ? state.identityUnlocked
+      : identityPinIsValid(pinValue);
+  }
+
+  async function verifyIdentityPin() {
+    const pin = normalizeIdentityPin(el.identityPin.value);
+    el.identityPin.value = pin;
+    setIdentityError("");
+    if (!state.identity || pin.length < 6) {
+      refreshIdentityUi();
+      return false;
+    }
+    const verifyToken = ++state.identityVerifyToken;
+    el.identityBadge.textContent = "正在验证";
+    try {
+      const hash = await hashIdentityPin(pin, state.identity.salt);
+      if (verifyToken !== state.identityVerifyToken) {
+        return false;
+      }
+      if (hash !== state.identity.pinHash) {
+        state.identityUnlocked = false;
+        refreshIdentityUi();
+        setIdentityError("身份码不正确，请重新输入。");
+        el.identityPin.select();
+        return false;
+      }
+      state.identityUnlocked = true;
+      applyIdentityToDrafts(state.identity);
+      setIdentityError("");
+      refreshIdentityUi();
+      return true;
+    } catch (error) {
+      setIdentityError(error.message);
+      refreshIdentityUi();
+      return false;
+    }
+  }
+
+  function resetLocalIdentity() {
+    if (
+      !window.confirm(
+        "确认重置本机身份吗？身份码、昵称、头像和所有房间会话都会从本浏览器清除。永久房主链接不会受影响。"
+      )
+    ) {
+      return;
+    }
+    try {
+      const sessionKeys = [];
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (key?.startsWith(TOKEN_PREFIX)) {
+          sessionKeys.push(key);
+        }
+      }
+      sessionKeys.forEach((key) => localStorage.removeItem(key));
+      localStorage.removeItem(IDENTITY_KEY);
+      localStorage.removeItem(NAME_KEY);
+      localStorage.removeItem(AVATAR_KEY);
+    } catch {
+      // Clearing memory below still prevents the current page from reusing the profile.
+    }
+    state.identity = null;
+    state.identityUnlocked = false;
+    state.identityVerifyToken += 1;
+    el.identityPin.value = "";
+    state.draftAvatars.create = "preset:jester";
+    state.draftAvatars.join = "preset:jester";
+    state.draftAvatars.rename = "preset:jester";
+    el.createName.value = "";
+    el.joinName.value = "";
+    renderAvatarPickers();
+    setIdentityError("");
+    refreshIdentityUi();
+    showToast("本机身份已重置");
   }
 
   function saveSession(code, payload) {
@@ -433,8 +674,16 @@
   function rememberName(name) {
     try {
       localStorage.setItem(NAME_KEY, name);
+      if (state.identity) {
+        state.identity = {
+          ...state.identity,
+          name,
+          updatedAt: Date.now()
+        };
+        localStorage.setItem(IDENTITY_KEY, JSON.stringify(state.identity));
+      }
     } catch {
-      // Naming still works for the current page.
+      showToast("昵称可以在本局使用，但没能写入本机身份。");
     }
   }
 
@@ -444,9 +693,28 @@
     state.draftAvatars.rename = avatar;
     try {
       localStorage.setItem(AVATAR_KEY, avatar);
+      if (state.identity) {
+        state.identity = {
+          ...state.identity,
+          avatar,
+          updatedAt: Date.now()
+        };
+        localStorage.setItem(IDENTITY_KEY, JSON.stringify(state.identity));
+      }
     } catch {
       showToast("头像没能保存到本地浏览器。");
     }
+  }
+
+  function finalizePendingProfileUpdate() {
+    const pending = state.pendingProfileUpdate;
+    const self = state.room?.self;
+    if (!pending || !self || self.name !== pending.name) {
+      return;
+    }
+    rememberName(pending.name);
+    rememberAvatar(pending.avatar);
+    state.pendingProfileUpdate = null;
   }
 
   function loadPreferences() {
@@ -465,6 +733,118 @@
       localStorage.setItem(PREF_KEY, JSON.stringify(state.preferences));
     } catch {
       // Preferences remain active for the current page.
+    }
+  }
+
+  function loadOrientationPreference() {
+    try {
+      const saved = localStorage.getItem(ORIENTATION_KEY);
+      if (["auto", "portrait", "landscape"].includes(saved)) {
+        state.orientation = saved;
+      }
+    } catch {
+      state.orientation = "auto";
+    }
+  }
+
+  function saveOrientationPreference() {
+    try {
+      localStorage.setItem(ORIENTATION_KEY, state.orientation);
+    } catch {
+      // The preference remains active for the current page.
+    }
+  }
+
+  function physicalOrientation() {
+    return window.innerHeight >= window.innerWidth ? "portrait" : "landscape";
+  }
+
+  function hasPhoneLayout() {
+    return (
+      window.matchMedia("(pointer: coarse)").matches ||
+      navigator.maxTouchPoints > 0 ||
+      Math.min(window.innerWidth, window.innerHeight) <= 720
+    );
+  }
+
+  function applyOrientationPreference() {
+    const actual = physicalOrientation();
+    const phoneLayout = hasPhoneLayout();
+    const mismatch =
+      phoneLayout &&
+      state.orientation !== "auto" &&
+      state.orientation !== actual;
+    document.body.dataset.screenLayout = actual;
+    document.body.dataset.orientationPreference = state.orientation;
+    document.body.classList.toggle("orientation-prompt-open", mismatch);
+    el.mobileOrientationButton.hidden = !phoneLayout;
+    el.mobileOrientationButton.textContent =
+      state.orientation === "portrait"
+        ? "竖屏"
+        : state.orientation === "landscape"
+          ? "横屏"
+          : "自动";
+    el.mobileOrientationButton.title =
+      state.orientation === "auto"
+        ? "屏幕方向：自动跟随，点击切换"
+        : `屏幕方向：${state.orientation === "portrait" ? "竖屏" : "横屏"}，点击切换`;
+    el.orientationModeSelect.value = state.orientation;
+    el.orientationModeSelect.closest(".orientation-tools-field").hidden =
+      !phoneLayout;
+    el.orientationPrompt.hidden = !mismatch;
+    if (mismatch) {
+      const landscape = state.orientation === "landscape";
+      el.orientationPromptTitle.textContent = landscape
+        ? "请把手机横过来"
+        : "请把手机转为竖屏";
+      el.orientationPromptText.textContent = landscape
+        ? "旋转设备后，牌桌会自动切换到横屏布局。"
+        : "旋转设备后，牌桌会自动恢复竖屏第一视角。";
+    }
+  }
+
+  function scheduleOrientationUpdate() {
+    if (state.orientationFrame) {
+      return;
+    }
+    state.orientationFrame = window.requestAnimationFrame(() => {
+      state.orientationFrame = null;
+      applyOrientationPreference();
+    });
+  }
+
+  async function tryLockOrientation() {
+    if (state.orientation === "auto") {
+      return;
+    }
+    try {
+      if (
+        document.documentElement.requestFullscreen &&
+        !document.fullscreenElement
+      ) {
+        await document.documentElement.requestFullscreen();
+      }
+      if (screen.orientation?.lock) {
+        await screen.orientation.lock(
+          state.orientation === "portrait" ? "portrait" : "landscape"
+        );
+      }
+    } catch {
+      // Browsers commonly reject orientation locks outside an installed app.
+    } finally {
+      applyOrientationPreference();
+    }
+  }
+
+  function setOrientationPreference(mode, attemptLock = true) {
+    if (!["auto", "portrait", "landscape"].includes(mode)) {
+      return;
+    }
+    state.orientation = mode;
+    saveOrientationPreference();
+    applyOrientationPreference();
+    if (attemptLock) {
+      tryLockOrientation();
     }
   }
 
@@ -661,9 +1041,8 @@
     if (document.title.startsWith("●")) {
       document.title = "三皮牌局 · 联机";
     }
-    refreshHostEntryVisibility();
-    const preferredName = loadPreferredName();
-    const preferredAvatar = loadPreferredAvatar();
+    const preferredName = state.identity?.name || loadPreferredName();
+    const preferredAvatar = state.identity?.avatar || loadPreferredAvatar();
     state.draftAvatars.create = preferredAvatar;
     state.draftAvatars.join = preferredAvatar;
     if (mode === "create" && !el.createName.value) {
@@ -677,14 +1056,18 @@
     }
     renderAvatarPickers();
     setEntryError(errorMessage || "");
+    refreshIdentityUi();
   }
 
   function refreshHostEntryVisibility() {
     const privateHost = state.hostPortalMode && !state.hostAuthorized;
+    const identityReady = !state.identity || state.identityUnlocked;
     el.hostPrivatePanel.hidden = !privateHost;
+    el.identityGate.hidden = privateHost;
     el.createRoomPanel.hidden =
-      state.entryMode !== "create" || privateHost;
-    el.joinRoomPanel.hidden = state.entryMode !== "join";
+      state.entryMode !== "create" || privateHost || !identityReady;
+    el.joinRoomPanel.hidden =
+      state.entryMode !== "join" || !identityReady;
   }
 
   async function verifyHostToken() {
@@ -723,25 +1106,82 @@
     el.connectionBadge.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(text)}`;
   }
 
+  async function confirmEntryIdentity() {
+    const pin = normalizeIdentityPin(el.identityPin.value);
+    el.identityPin.value = pin;
+    if (!identityPinIsValid(pin)) {
+      setIdentityError("请输入完整的 6 位数字身份码。");
+      el.identityPin.focus();
+      return null;
+    }
+    if (state.identity) {
+      if (!state.identityUnlocked && !(await verifyIdentityPin())) {
+        return null;
+      }
+      return {
+        pin,
+        name: state.identity.name,
+        avatar: state.identity.avatar,
+        newIdentity: null
+      };
+    }
+    const name = el.createRoomPanel.hidden
+      ? el.joinName.value.trim()
+      : el.createName.value.trim();
+    const avatar = el.createRoomPanel.hidden
+      ? state.draftAvatars.join
+      : state.draftAvatars.create;
+    if (!name) {
+      setIdentityError("请填写昵称。");
+      (el.createRoomPanel.hidden ? el.joinName : el.createName).focus();
+      return null;
+    }
+    try {
+      return {
+        pin,
+        name,
+        avatar,
+        newIdentity: await createIdentity(pin, name, avatar)
+      };
+    } catch (error) {
+      setIdentityError(error.message);
+      return null;
+    }
+  }
+
+  function persistNewIdentity(identity) {
+    if (!identity) {
+      return;
+    }
+    persistIdentity(identity);
+    applyIdentityToDrafts(identity);
+  }
+
   async function createRoom(event) {
     event.preventDefault();
     setEntryError("");
-    const name = el.createName.value.trim();
+    setIdentityError("");
+    const identity = await confirmEntryIdentity();
+    if (!identity) {
+      return;
+    }
+    const { name, avatar } = identity;
     const seatCap = Number(el.createSeatCap.value);
     el.createRoomButton.disabled = true;
     try {
       const payload = await requestJson("/api/rooms", {
         name,
         seatCap,
-        avatar: state.draftAvatars.create,
+        avatar,
         ownerToken:
           state.hostPortalMode && state.hostAuthorized
             ? state.hostToken
             : undefined
       });
       saveSession(payload.roomCode, payload);
+      persistNewIdentity(identity.newIdentity);
       rememberName(name);
-      rememberAvatar(state.draftAvatars.create);
+      rememberAvatar(avatar);
       state.roomCode = payload.roomCode;
       history.replaceState({}, "", `/room/${payload.roomCode}`);
       showRoom();
@@ -760,16 +1200,22 @@
       return;
     }
     setEntryError("");
-    const name = el.joinName.value.trim();
+    setIdentityError("");
+    const identity = await confirmEntryIdentity();
+    if (!identity) {
+      return;
+    }
+    const { name, avatar } = identity;
     el.joinRoomButton.disabled = true;
     try {
       const payload = await requestJson(
         `/api/rooms/${state.roomCode}/join`,
-        { name, avatar: state.draftAvatars.join }
+        { name, avatar }
       );
       saveSession(state.roomCode, payload);
+      persistNewIdentity(identity.newIdentity);
       rememberName(name);
-      rememberAvatar(state.draftAvatars.join);
+      rememberAvatar(avatar);
       showRoom();
       connectSocket();
     } catch (error) {
@@ -854,6 +1300,7 @@
       if (message.type === "room:state") {
         state.room = message.room;
         state.pendingAction = false;
+        finalizePendingProfileUpdate();
         setConnection("connected", "已连接");
         showRoom();
         render();
@@ -870,6 +1317,7 @@
         }
       } else if (message.type === "error") {
         state.pendingAction = false;
+        state.pendingProfileUpdate = null;
         showToast(message.message || "操作失败");
         if (el.renameDialog.open) {
           el.renameError.textContent = message.message || "昵称修改失败";
@@ -2696,8 +3144,7 @@
       const avatar = state.draftAvatars.rename;
       await uploadProfileAvatar(avatar);
       if (sendMessage({ type: "rename", name })) {
-        rememberName(name);
-        rememberAvatar(avatar);
+        state.pendingProfileUpdate = { name, avatar };
         el.renameDialog.close();
       }
     } catch (error) {
@@ -2783,6 +3230,48 @@
   function bindEvents() {
     el.createRoomForm?.addEventListener("submit", createRoom);
     el.joinRoomForm?.addEventListener("submit", joinRoom);
+    el.identityPin?.addEventListener("input", () => {
+      const pin = normalizeIdentityPin(el.identityPin.value);
+      if (el.identityPin.value !== pin) {
+        el.identityPin.value = pin;
+      }
+      setIdentityError("");
+      refreshIdentityUi();
+      if (state.identity && pin.length === 6) {
+        verifyIdentityPin();
+      }
+    });
+    el.identityPin?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      if (!state.identity) {
+        (el.createRoomPanel.hidden ? el.joinName : el.createName).focus();
+        return;
+      }
+      verifyIdentityPin().then((verified) => {
+        if (verified) {
+          (el.createRoomPanel.hidden ? el.joinRoomButton : el.createRoomButton).focus();
+        }
+      });
+    });
+    el.resetIdentityButton?.addEventListener("click", resetLocalIdentity);
+    el.mobileOrientationButton.addEventListener("click", () => {
+      const next =
+        state.orientation === "auto"
+          ? "portrait"
+          : state.orientation === "portrait"
+            ? "landscape"
+            : "auto";
+      setOrientationPreference(next);
+    });
+    el.orientationModeSelect.addEventListener("change", () => {
+      setOrientationPreference(el.orientationModeSelect.value);
+    });
+    el.orientationAutoButton.addEventListener("click", () => {
+      setOrientationPreference("auto", false);
+    });
     [
       ["create", el.createAvatarFile],
       ["join", el.joinAvatarFile],
@@ -3077,17 +3566,32 @@
         setMobileToolsOpen(false);
       }
     });
+    window.addEventListener("resize", scheduleOrientationUpdate);
+    window.addEventListener("orientationchange", scheduleOrientationUpdate);
+    screen.orientation?.addEventListener?.(
+      "change",
+      scheduleOrientationUpdate
+    );
+    document.addEventListener("fullscreenchange", scheduleOrientationUpdate);
   }
 
   function init() {
     cacheElements();
     bindEvents();
     loadPreferences();
-    const savedAvatar = loadPreferredAvatar();
+    loadOrientationPreference();
+    state.identity = loadIdentityRecord();
+    state.identityUnlocked = false;
+    const savedAvatar = state.identity?.avatar || loadPreferredAvatar();
     state.draftAvatars.create = savedAvatar;
     state.draftAvatars.join = savedAvatar;
     state.draftAvatars.rename = savedAvatar;
+    if (state.identity) {
+      el.createName.value = state.identity.name;
+      el.joinName.value = state.identity.name;
+    }
     applyOnlinePreferences();
+    applyOrientationPreference();
     renderAvatarPickers();
     setSocialTab("equity");
     state.hostPortalMode =

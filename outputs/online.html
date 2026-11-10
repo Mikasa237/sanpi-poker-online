@@ -11,8 +11,8 @@
       content="三皮牌局联机房间：创建链接，邀请最多十名好友实时对战。"
     />
     <title>三皮牌局 · 联机</title>
-    <link rel="stylesheet" href="/styles.css?v=7" />
-    <link rel="stylesheet" href="/online.css?v=7" />
+    <link rel="stylesheet" href="/styles.css?v=8" />
+    <link rel="stylesheet" href="/online.css?v=8" />
   </head>
   <body class="online-body">
     <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -48,31 +48,69 @@
               <h2>需要使用已保存的房主链接</h2>
               <p>普通联机地址和房间邀请链接不能创建或显示永久房主凭证。</p>
             </div>
+            <section id="identityGate" class="identity-gate" aria-live="polite">
+              <div class="identity-gate-heading">
+                <div>
+                  <p class="section-kicker">本机身份</p>
+                  <h2 id="identityTitle">输入 6 位身份码</h2>
+                </div>
+                <span id="identityBadge" class="identity-badge">仅保存在本机</span>
+              </div>
+              <p id="identityHint" class="identity-hint">
+                输入身份码后会自动使用这台设备保存的昵称和头像。
+              </p>
+              <label id="identityPinField" class="online-field identity-pin-field">
+                <span>6 位数字身份码</span>
+                <input
+                  id="identityPin"
+                  type="password"
+                  inputmode="numeric"
+                  pattern="[0-9]{6}"
+                  maxlength="6"
+                  autocomplete="off"
+                  placeholder="例如 052816"
+                  aria-describedby="identityHint identityError"
+                />
+              </label>
+              <div id="identityProfilePreview" class="identity-profile-preview" hidden>
+                <div id="identityAvatarPreview" class="profile-avatar-preview"></div>
+                <div>
+                  <strong id="identityProfileName"></strong>
+                  <span>身份已验证，本机资料已载入</span>
+                </div>
+              </div>
+              <p id="identityError" class="entry-error" role="alert" hidden></p>
+              <button id="resetIdentityButton" class="text-button danger-text identity-reset" type="button" hidden>
+                忘记身份码？重置本机身份
+              </button>
+            </section>
             <div id="createRoomPanel">
               <p class="section-kicker">创建联机房</p>
               <h2>开一张新桌</h2>
               <form id="createRoomForm">
-                <label class="online-field">
-                  <span>你的昵称</span>
-                  <input
-                    id="createName"
-                    name="name"
-                    maxlength="12"
-                    autocomplete="nickname"
-                    placeholder="最多 12 个字符"
-                    required
-                  />
-                </label>
-                <div class="profile-picker">
-                  <span class="online-field-label">选择头像</span>
-                  <div class="avatar-preview-row">
-                    <div id="createAvatarPreview" class="profile-avatar-preview"></div>
-                    <label class="upload-button">
-                      上传图片
-                      <input id="createAvatarFile" type="file" accept="image/png,image/x-png,image/apng,image/jpeg,image/webp,.png,.apng,.jpg,.jpeg,.webp" />
-                    </label>
+                <div id="createProfileFields" class="identity-profile-fields">
+                  <label class="online-field">
+                    <span>你的昵称</span>
+                    <input
+                      id="createName"
+                      name="name"
+                      maxlength="12"
+                      autocomplete="nickname"
+                      placeholder="最多 12 个字符"
+                      required
+                    />
+                  </label>
+                  <div class="profile-picker">
+                    <span class="online-field-label">选择头像</span>
+                    <div class="avatar-preview-row">
+                      <div id="createAvatarPreview" class="profile-avatar-preview"></div>
+                      <label class="upload-button">
+                        上传图片
+                        <input id="createAvatarFile" type="file" accept="image/png,image/x-png,image/apng,image/jpeg,image/webp,.png,.apng,.jpg,.jpeg,.webp" />
+                      </label>
+                    </div>
+                    <div id="createPresetAvatars" class="avatar-preset-grid"></div>
                   </div>
-                  <div id="createPresetAvatars" class="avatar-preset-grid"></div>
                 </div>
                 <label class="online-field">
                   <span>最多座位</span>
@@ -98,27 +136,29 @@
               <p class="section-kicker">加入联机房</p>
               <h2>房间 <span id="joinCode"></span></h2>
               <form id="joinRoomForm">
-                <label class="online-field">
-                  <span>你的昵称</span>
-                  <input
-                    id="joinName"
-                    name="name"
-                    maxlength="12"
-                    autocomplete="nickname"
-                    placeholder="最多 12 个字符"
-                    required
-                  />
-                </label>
-                <div class="profile-picker">
-                  <span class="online-field-label">选择头像</span>
-                  <div class="avatar-preview-row">
-                    <div id="joinAvatarPreview" class="profile-avatar-preview"></div>
-                    <label class="upload-button">
-                      上传图片
-                      <input id="joinAvatarFile" type="file" accept="image/png,image/x-png,image/apng,image/jpeg,image/webp,.png,.apng,.jpg,.jpeg,.webp" />
-                    </label>
+                <div id="joinProfileFields" class="identity-profile-fields">
+                  <label class="online-field">
+                    <span>你的昵称</span>
+                    <input
+                      id="joinName"
+                      name="name"
+                      maxlength="12"
+                      autocomplete="nickname"
+                      placeholder="最多 12 个字符"
+                      required
+                    />
+                  </label>
+                  <div class="profile-picker">
+                    <span class="online-field-label">选择头像</span>
+                    <div class="avatar-preview-row">
+                      <div id="joinAvatarPreview" class="profile-avatar-preview"></div>
+                      <label class="upload-button">
+                        上传图片
+                        <input id="joinAvatarFile" type="file" accept="image/png,image/x-png,image/apng,image/jpeg,image/webp,.png,.apng,.jpg,.jpeg,.webp" />
+                      </label>
+                    </div>
+                    <div id="joinPresetAvatars" class="avatar-preset-grid"></div>
                   </div>
-                  <div id="joinPresetAvatars" class="avatar-preset-grid"></div>
                 </div>
                 <button id="joinRoomButton" class="primary-button primary-button-large" type="submit">
                   进入房间
@@ -153,6 +193,7 @@
             <button id="onlineSoundToggle" class="icon-button" type="button" aria-pressed="true" title="声音开关">♪</button>
             <button id="onlineMotionToggle" class="icon-button" type="button" aria-pressed="true" title="动画开关">◌</button>
             <button id="rulesButton" class="ghost-button" type="button">规则</button>
+            <button id="mobileOrientationButton" class="ghost-button mobile-orientation-button" type="button" title="切换屏幕方向">自动</button>
             <button id="mobileToolsButton" class="ghost-button mobile-tools-button" type="button" aria-expanded="false" aria-controls="onlineMoreTools">
               工具
             </button>
@@ -422,6 +463,15 @@
                 <button id="mobileToolsCloseButton" class="icon-button" type="button" aria-label="关闭工具">×</button>
               </header>
 
+              <label class="online-field compact-field orientation-tools-field">
+                <span>手机屏幕方向</span>
+                <select id="orientationModeSelect">
+                  <option value="auto">自动跟随手机</option>
+                  <option value="portrait">竖屏</option>
+                  <option value="landscape">横屏</option>
+                </select>
+              </label>
+
               <section id="hostControls" class="host-controls online-host-controls">
                 <p class="section-kicker">房主控制</p>
                 <div class="host-control-row">
@@ -570,7 +620,7 @@
           <section><h3>先手与同分</h3><p>第三张牌摸完后，由第三张牌点数最大的非赖子玩家先下注；花色只用于争夺先手，不参与最终结算。最终只比较点数和或三皮，完全同分时底池保留到下一手。</p></section>
           <section><h3>累加底池</h3><p>平局时当前底池进入累计底池。下一手按正常规则重新发牌和下注，唯一总赢家获得当前底池与全部累计底池，随后累计底池清零。</p></section>
           <section><h3>回溯者</h3><p>筹码耗尽后会保留原座并成为 1–3 转回溯者。每手发牌后可请求查看一名在座玩家的底牌，对方同意后才能查看；若该目标成为唯一赢家，回溯者获得一半初始本钱并复活。最多复活三次。</p></section>
-          <section><h3>语音与重洗</h3><p>在座玩家和回溯者可自由加入实时语音，并可在本地单独静音其他玩家。第一轮出现加注时，剩余牌堆会真实重洗，并播放庄重洗牌动画和音效后再发第三张牌。</p></section>
+          <section><h3>互动与重洗</h3><p>公共聊天支持文字、快捷语和投掷互动。第一轮出现加注时，剩余牌堆会真实重洗，并播放庄重洗牌动画和音效后再发第三张牌。</p></section>
           <section><h3>联机淘汰</h3><p>筹码归零后自动离开座位并成为旁观者。不会补筹码。最后一名有筹码的玩家赢下整桌。</p></section>
           <section><h3>开局设置</h3><p>房主可在开局前设置底注和单注封顶。底注同时是最小下注和最小加注单位；单注封顶限制一笔下注或加注的最高目标额度，0 表示无上限。牌局进行中锁定，下一局开始前可重新调整。</p></section>
           <section><h3>掉线与房主</h3><p>掉线不自动弃牌。房主确认后可以跳过卡住的当前玩家；本手结束后将其移座。房主离开后会自动转让。</p></section>
@@ -578,9 +628,19 @@
       </div>
     </dialog>
 
+    <div id="orientationPrompt" class="orientation-prompt" hidden role="dialog" aria-modal="true" aria-labelledby="orientationPromptTitle">
+      <div class="orientation-prompt-card">
+        <span class="orientation-phone-icon" aria-hidden="true">▯</span>
+        <p class="section-kicker">屏幕方向</p>
+        <h2 id="orientationPromptTitle">请把手机横过来</h2>
+        <p id="orientationPromptText">旋转设备后，牌桌会自动切换到横屏布局。</p>
+        <button id="orientationAutoButton" class="primary-button" type="button">恢复自动方向</button>
+      </div>
+    </div>
+
     <div id="onlineToast" class="toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="/engine.js?v=7"></script>
-    <script src="/online.js?v=7"></script>
+    <script src="/engine.js?v=8"></script>
+    <script src="/online.js?v=8"></script>
   </body>
 </html>
