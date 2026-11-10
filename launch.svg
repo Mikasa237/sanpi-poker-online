@@ -63,7 +63,7 @@
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 6000);
         try {
-          const response = await fetch(`${NTFY_URL}&t=${Date.now()}`, {
+          const response = await fetch(NTFY_URL, {
             cache: "no-store",
             signal: controller.signal
           });
