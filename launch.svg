@@ -28,10 +28,11 @@
   <text x="450" y="526" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="14" fill="#779688">固定入口不会变化 · 电脑开机联网后自动恢复</text>
   <script><![CDATA[
     (() => {
-      const RAW_URL =
-        "https://raw.githubusercontent.com/Mikasa237/sanpi-poker-online/main/tunnel.json";
-      const CDN_URL =
-        "https://cdn.jsdelivr.net/gh/Mikasa237/sanpi-poker-online@main/tunnel.json";
+      const RUNTIME_URLS = [
+        "https://raw.githubusercontent.com/Mikasa237/sanpi-poker-online/main/tunnel.json",
+        "https://raw.githack.com/Mikasa237/sanpi-poker-online/main/tunnel.json",
+        "https://cdn.jsdelivr.net/gh/Mikasa237/sanpi-poker-online@main/tunnel.json"
+      ];
       const status = document.getElementById("status");
       const enter = document.getElementById("enter");
 
@@ -76,23 +77,30 @@
 
       async function connect() {
         try {
-          let runtime;
-          try {
-            runtime = await fetchJson(RAW_URL);
-          } catch {
-            runtime = await fetchJson(CDN_URL);
+          const candidates = new Set();
+          for (const url of RUNTIME_URLS) {
+            try {
+              const runtime = await fetchJson(url);
+              const candidate = String(runtime.url || "").replace(/\/+$/, "");
+              if (
+                /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i.test(candidate)
+              ) {
+                candidates.add(candidate);
+              }
+            } catch {
+              // Try the next mirror.
+            }
           }
-          const baseUrl = String(runtime.url || "").replace(/\/+$/, "");
-          if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i.test(baseUrl)) {
-            throw new Error("当前牌桌地址尚未发布");
+          for (const baseUrl of candidates) {
+            if (await healthCheck(baseUrl)) {
+              const target = targetFor(baseUrl);
+              enter.setAttribute("href", target);
+              status.textContent = "已连接，正在进入…";
+              location.replace(target);
+              return;
+            }
           }
-          const target = targetFor(baseUrl);
-          enter.setAttribute("href", target);
-          if (!(await healthCheck(baseUrl))) {
-            throw new Error("电脑端牌桌尚未就绪");
-          }
-          status.textContent = "已连接，正在进入…";
-          location.replace(target);
+          throw new Error("电脑端牌桌尚未就绪");
         } catch {
           status.textContent = "牌桌暂时离线，请确认电脑已开机联网";
           enter.setAttribute(
