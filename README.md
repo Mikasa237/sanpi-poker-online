@@ -21,10 +21,9 @@
 
 ## 联机模式
 
-在 `outputs` 目录运行：
+在当前目录运行：
 
 ```powershell
-cd outputs
 npm install
 npm start
 ```
