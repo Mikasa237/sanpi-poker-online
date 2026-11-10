@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $mutex = [System.Threading.Mutex]::new($false, "Local\SanpiPokerTunnel")
 if (-not $mutex.WaitOne(0)) {
@@ -18,9 +18,14 @@ New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
 function New-RandomSecret {
-  return [Convert]::ToHexString(
-    [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(48)
-  ).ToLowerInvariant()
+  $bytes = New-Object byte[] 48
+  $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    $generator.GetBytes($bytes)
+  } finally {
+    $generator.Dispose()
+  }
+  return (-join ($bytes | ForEach-Object { $_.ToString("x2") }))
 }
 
 if (-not (Test-Path $secretFile)) {
@@ -75,7 +80,11 @@ function Publish-TunnelUrl([string]$url) {
     url = $url
     updatedAt = (Get-Date).ToUniversalTime().ToString("o")
   } | ConvertTo-Json
-  Set-Content -LiteralPath $runtimeFile -Value $payload -Encoding utf8
+  [System.IO.File]::WriteAllText(
+    $runtimeFile,
+    $payload,
+    (New-Object System.Text.UTF8Encoding($false))
+  )
 
   Push-Location $repoRoot
   try {
