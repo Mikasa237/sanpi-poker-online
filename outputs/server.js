@@ -1985,6 +1985,7 @@ function createGameServer(options = {}) {
     const requestUrl = new URL(request.url, `http://${request.headers.host}`);
     try {
       if (request.method === "GET" && requestUrl.pathname === "/api/health") {
+        response.setHeader("access-control-allow-origin", "*");
         sendJson(response, 200, {
           ok: true,
           rooms: rooms.size,

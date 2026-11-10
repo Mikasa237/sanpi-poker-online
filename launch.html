@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#08251b" />
+    <title>三皮牌局 · 固定入口</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+        background: #061a13;
+        color: #eef8f1;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at 50% 22%, #1f6b4d 0, transparent 35%),
+          radial-gradient(circle at 15% 85%, #17372b 0, transparent 32%),
+          #061a13;
+      }
+      main {
+        width: min(520px, 100%);
+        padding: clamp(28px, 7vw, 48px);
+        text-align: center;
+        border: 1px solid rgba(222, 188, 97, 0.42);
+        border-radius: 28px;
+        background: linear-gradient(160deg, rgba(14, 51, 38, 0.96), rgba(5, 25, 18, 0.98));
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.48), inset 0 1px rgba(255, 255, 255, 0.06);
+      }
+      .mark {
+        width: 76px;
+        height: 76px;
+        margin: 0 auto 22px;
+        display: grid;
+        place-items: center;
+        border-radius: 22px;
+        color: #251b08;
+        background: linear-gradient(145deg, #f2d47d, #b97a31);
+        box-shadow: 0 12px 30px rgba(222, 188, 97, 0.18);
+        font-size: 34px;
+        font-weight: 900;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-family: "Noto Serif SC", "Songti SC", serif;
+        font-size: clamp(28px, 7vw, 42px);
+        letter-spacing: 0.08em;
+      }
+      p {
+        margin: 0 auto;
+        max-width: 380px;
+        color: #a9c8ba;
+        line-height: 1.75;
+      }
+      .status {
+        margin: 28px 0 18px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.045);
+        color: #d9e9e0;
+        font-size: 0.92rem;
+      }
+      .status::before {
+        content: "";
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-right: 9px;
+        border-radius: 50%;
+        background: #e5bd5a;
+        box-shadow: 0 0 0 5px rgba(229, 189, 90, 0.12);
+        vertical-align: 1px;
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      body.ready .status::before {
+        background: #58d49b;
+        box-shadow: 0 0 0 5px rgba(88, 212, 155, 0.12);
+        animation: none;
+      }
+      body.offline .status::before {
+        background: #ec786f;
+        box-shadow: 0 0 0 5px rgba(236, 120, 111, 0.12);
+        animation: none;
+      }
+      a.button {
+        display: none;
+        width: 100%;
+        padding: 15px 22px;
+        border-radius: 14px;
+        color: #1d1708;
+        background: linear-gradient(180deg, #f3d982, #c99542);
+        text-decoration: none;
+        font-weight: 800;
+        box-shadow: 0 10px 26px rgba(201, 149, 66, 0.2);
+      }
+      body.ready a.button {
+        display: block;
+      }
+      button {
+        margin-top: 14px;
+        padding: 11px 18px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 12px;
+        color: #dcece3;
+        background: rgba(255, 255, 255, 0.06);
+        cursor: pointer;
+      }
+      .note {
+        margin-top: 20px;
+        color: #779688;
+        font-size: 0.76rem;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.45;
+          transform: scale(0.8);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .status::before {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true">三</div>
+      <h1>三皮牌局</h1>
+      <p>固定入口正在读取当前牌桌地址。电脑开机联网后会自动恢复连接。</p>
+      <div id="status" class="status" aria-live="polite">正在连接当前牌桌…</div>
+      <a id="enter" class="button" href="#">进入牌桌</a>
+      <button id="retry" type="button" hidden>重新连接</button>
+      <div class="note">此固定入口不会变化；牌桌本身仍由你的电脑提供运行服务。</div>
+    </main>
+    <script>
+      const RAW_URL =
+        "https://raw.githubusercontent.com/Mikasa237/sanpi-poker-online/main/tunnel.json";
+      const CDN_URL =
+        "https://cdn.jsdelivr.net/gh/Mikasa237/sanpi-poker-online@main/tunnel.json";
+      const status = document.querySelector("#status");
+      const enter = document.querySelector("#enter");
+      const retry = document.querySelector("#retry");
+      let redirectTimer = null;
+
+      async function fetchJson(url, timeoutMs = 6000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(`${url}?t=${Date.now()}`, {
+            cache: "no-store",
+            signal: controller.signal
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return await response.json();
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      function targetFor(baseUrl) {
+        const base = String(baseUrl || "").replace(/\/+$/, "");
+        const hash = location.hash.startsWith("#owner=") ? location.hash : "";
+        return hash ? `${base}/host${hash}` : `${base}/online.html`;
+      }
+
+      async function healthCheck(baseUrl) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 7000);
+        try {
+          const response = await fetch(`${baseUrl}/api/health?t=${Date.now()}`, {
+            cache: "no-store",
+            signal: controller.signal
+          });
+          if (!response.ok) return false;
+          const health = await response.json();
+          return health.ok === true;
+        } catch {
+          return false;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function connect() {
+        clearTimeout(redirectTimer);
+        document.body.classList.remove("ready", "offline");
+        retry.hidden = true;
+        enter.removeAttribute("href");
+        status.textContent = "正在连接当前牌桌…";
+        try {
+          let runtime;
+          try {
+            runtime = await fetchJson(RAW_URL);
+          } catch {
+            runtime = await fetchJson(CDN_URL);
+          }
+          const baseUrl = String(runtime.url || "").replace(/\/+$/, "");
+          if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i.test(baseUrl)) {
+            throw new Error("当前牌桌地址尚未发布");
+          }
+          const target = targetFor(baseUrl);
+          enter.href = target;
+          status.textContent = "当前牌桌已在线，正在进入…";
+          document.body.classList.add("ready");
+          if (await healthCheck(baseUrl)) {
+            redirectTimer = setTimeout(() => location.replace(target), 500);
+          } else {
+            status.textContent = "入口已找到，但电脑端牌桌仍在启动，请稍候重试。";
+            document.body.classList.remove("ready");
+            document.body.classList.add("offline");
+            retry.hidden = false;
+          }
+        } catch {
+          status.textContent = "牌桌暂时离线。请确认电脑已开机并连接网络。";
+          document.body.classList.add("offline");
+          retry.hidden = false;
+        }
+      }
+
+      retry.addEventListener("click", connect);
+      window.addEventListener("hashchange", connect);
+      connect();
+    </script>
+  </body>
+</html>
