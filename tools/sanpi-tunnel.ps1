@@ -13,6 +13,7 @@ $hostIssueSecretFile = Join-Path $stateDir "host-issue-secret.txt"
 $cloudflared = Join-Path $repoRoot "work\cloudflared\node_modules\@botharness\cloudflared-win32-x64\bin\cloudflared.exe"
 $serverDir = Join-Path $repoRoot "outputs"
 $runtimeFile = Join-Path $repoRoot "tunnel.json"
+$ntfyTopic = "sanpi-1967e892780a467d91b8d4ae"
 
 New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
@@ -72,6 +73,20 @@ function Start-LocalServer {
 }
 
 function Publish-TunnelUrl([string]$url) {
+  if ($script:lastNtfyUrl -ne $url) {
+    try {
+      Invoke-WebRequest -UseBasicParsing `
+        -Method Post `
+        -Uri "https://ntfy.sh/$ntfyTopic" `
+        -Body $url `
+        -TimeoutSec 12 | Out-Null
+      $script:lastNtfyUrl = $url
+    } catch {
+      Add-Content -LiteralPath (Join-Path $logDir "publish.err.log") `
+        -Value "$(Get-Date -Format o) ntfy: $($_.Exception.Message)"
+    }
+  }
+
   if ($script:publishedUrl -eq $url) {
     return
   }

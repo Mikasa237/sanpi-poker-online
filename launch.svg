@@ -33,6 +33,8 @@
         "https://raw.githack.com/Mikasa237/sanpi-poker-online/main/tunnel.json",
         "https://cdn.jsdelivr.net/gh/Mikasa237/sanpi-poker-online@main/tunnel.json"
       ];
+      const NTFY_URL =
+        "https://ntfy.sh/sanpi-1967e892780a467d91b8d4ae/json?poll=1&since=all";
       const status = document.getElementById("status");
       const enter = document.getElementById("enter");
 
@@ -57,6 +59,50 @@
         return hash ? `${base}/host${hash}` : `${base}/online.html`;
       }
 
+      async function fetchNtfyUrls() {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        try {
+          const response = await fetch(`${NTFY_URL}&t=${Date.now()}`, {
+            cache: "no-store",
+            signal: controller.signal
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const text = await response.text();
+          return text
+            .split(/\n+/)
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+            .filter((entry) => entry.event === "message")
+            .map((entry) => entry.message)
+            .reverse();
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function fetchPublishedUrls() {
+        const responses = await Promise.allSettled([
+          fetchNtfyUrls(),
+          ...RUNTIME_URLS.map((url) => fetchJson(url))
+        ]);
+        const candidates = new Set();
+        for (const result of responses) {
+          if (result.status !== "fulfilled") continue;
+          const value = result.value;
+          const entries = Array.isArray(value)
+            ? value
+            : [value].filter(Boolean).map((item) => item.url);
+          for (const entry of entries) {
+            const candidate = String(entry || "").replace(/\/+$/, "");
+            if (/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i.test(candidate)) {
+              candidates.add(candidate);
+            }
+          }
+        }
+        return Array.from(candidates);
+      }
+
       async function healthCheck(baseUrl) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 7000);
@@ -77,20 +123,7 @@
 
       async function connect() {
         try {
-          const candidates = new Set();
-          for (const url of RUNTIME_URLS) {
-            try {
-              const runtime = await fetchJson(url);
-              const candidate = String(runtime.url || "").replace(/\/+$/, "");
-              if (
-                /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i.test(candidate)
-              ) {
-                candidates.add(candidate);
-              }
-            } catch {
-              // Try the next mirror.
-            }
-          }
+          const candidates = await fetchPublishedUrls();
           for (const baseUrl of candidates) {
             if (await healthCheck(baseUrl)) {
               const target = targetFor(baseUrl);
