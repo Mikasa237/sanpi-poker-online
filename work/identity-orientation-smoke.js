@@ -60,6 +60,54 @@ async function assertNoHorizontalScroll(page, label) {
   );
 }
 
+async function assertUprightHandCards(page, label) {
+  await page.waitForFunction(
+    () => document.querySelector("#onlinePhaseText")?.textContent.includes("下注"),
+    null,
+    { timeout: 15000 }
+  );
+  await page.waitForTimeout(450);
+  const hand = await page.evaluate(() => {
+    const slots = Array.from(
+      document.querySelectorAll("#onlineHumanHandZone .hero-card-slot")
+    );
+    return {
+      slots: slots.map((slot) => {
+        const rect = slot.getBoundingClientRect();
+        const card = slot.querySelector(".playing-card");
+        const bottom = slot.querySelector(".card-corner.bottom");
+        return {
+          left: rect.left,
+          right: rect.right,
+          width: rect.width,
+          height: rect.height,
+          slotTransform: getComputedStyle(slot).transform,
+          cardTransform: card ? getComputedStyle(card).transform : null,
+          bottomCornerDisplay: bottom ? getComputedStyle(bottom).display : null
+        };
+      })
+    };
+  });
+  assert.equal(hand.slots.length, 3, `${label} should show three card slots`);
+  hand.slots.forEach((slot, index) => {
+    assert.ok(slot.width > 0 && slot.height > 0, `${label} slot ${index + 1}`);
+    assert.equal(slot.slotTransform, "none", `${label} slot ${index + 1} rotation`);
+    if (slot.bottomCornerDisplay !== null) {
+      assert.equal(
+        slot.bottomCornerDisplay,
+        "none",
+        `${label} slot ${index + 1} should not repeat an upside-down corner`
+      );
+    }
+    if (index > 0) {
+      assert.ok(
+        hand.slots[index - 1].right <= slot.left,
+        `${label} cards ${index} and ${index + 1} overlap`
+      );
+    }
+  });
+}
+
 async function main() {
   runningApp = createGameServer();
   const address = await runningApp.start(0, "127.0.0.1");
@@ -199,6 +247,7 @@ async function main() {
     null,
     { timeout: 10000 }
   );
+  await assertUprightHandCards(page, "390x844 portrait");
 
   await assertNoHorizontalScroll(page, "390x844 portrait");
   assert.equal(
@@ -227,6 +276,7 @@ async function main() {
 
   await page.setViewportSize({ width: 844, height: 390 });
   await page.locator("#orientationPrompt").waitFor({ state: "hidden" });
+  await assertUprightHandCards(page, "844x390 landscape");
   await assertNoHorizontalScroll(page, "844x390 landscape");
   const landscape = await page.evaluate(() => ({
     layout: document.body.dataset.screenLayout,

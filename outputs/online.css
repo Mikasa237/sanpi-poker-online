@@ -2492,3 +2492,38 @@
     display: none;
   }
 }
+
+/* Keep the player's three cards upright, evenly spaced, and fully readable. */
+.online-table-shell .hero-hand-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  justify-content: center;
+  width: min(250px, 100%);
+  gap: 10px;
+  overflow: visible;
+}
+
+.online-table-shell .hero-card-slot,
+.online-table-shell .hero-card-slot.role-hole,
+.online-table-shell .hero-card-slot.role-up,
+.online-table-shell .hero-card-slot.role-draw {
+  width: 100%;
+  min-width: 0;
+  transform: none !important;
+}
+
+.online-table-shell .hero-card-slot .playing-card {
+  width: min(100%, 68px);
+  height: auto;
+  aspect-ratio: 7 / 10;
+  justify-self: center;
+}
+
+.online-table-shell .hero-card-slot .card-corner.bottom {
+  display: none;
+}
+
+.online-table-shell .hero-card-label {
+  min-height: 2.4em;
+}
