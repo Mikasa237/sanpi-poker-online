@@ -121,6 +121,19 @@ function Publish-TunnelUrl([string]$url) {
   }
 }
 
+function Test-PublicTunnel([string]$url) {
+  if (-not $url) {
+    return $false
+  }
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing `
+      -Uri "$url/api/health" -TimeoutSec 6
+    return $response.StatusCode -eq 200
+  } catch {
+    return $false
+  }
+}
+
 function Start-Tunnel {
   if (-not (Test-Path $cloudflared)) {
     throw "找不到 cloudflared.exe。"
@@ -128,7 +141,7 @@ function Start-Tunnel {
   $stdout = Join-Path $logDir "tunnel.out.log"
   $stderr = Join-Path $logDir "tunnel.err.log"
   $process = Start-Process -FilePath $cloudflared `
-    -ArgumentList @("tunnel", "--url", "http://127.0.0.1:3000", "--no-autoupdate") `
+    -ArgumentList @("tunnel", "--url", "http://127.0.0.1:3000", "--no-autoupdate", "--protocol", "http2") `
     -WindowStyle Hidden `
     -PassThru `
     -RedirectStandardOutput $stdout `
@@ -158,6 +171,7 @@ try {
     try {
       Start-LocalServer | Out-Null
       $tunnel = Start-Tunnel
+      $tunnelFailures = 0
       while (-not $tunnel.HasExited) {
         if (-not (Test-LocalServer)) {
           Start-LocalServer | Out-Null
@@ -167,6 +181,21 @@ try {
         } catch {
           Add-Content -LiteralPath (Join-Path $logDir "publish.err.log") `
             -Value "$(Get-Date -Format o) $($_.Exception.Message)"
+        }
+        if (Test-PublicTunnel $script:tunnelUrl) {
+          $tunnelFailures = 0
+        } else {
+          $tunnelFailures += 1
+          Add-Content -LiteralPath (Join-Path $logDir "watchdog.err.log") `
+            -Value "$(Get-Date -Format o) 公网隧道健康检查失败（$tunnelFailures/3）。"
+          if ($tunnelFailures -ge 3) {
+            Add-Content -LiteralPath (Join-Path $logDir "watchdog.err.log") `
+              -Value "$(Get-Date -Format o) 连续三次失败，重建 Cloudflare 隧道。"
+            if (-not $tunnel.HasExited) {
+              Stop-Process -Id $tunnel.Id -Force
+            }
+            break
+          }
         }
         Start-Sleep -Seconds 10
       }
