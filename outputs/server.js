@@ -13,6 +13,7 @@ const ROOM_CODE_LENGTH = 6;
 const MAX_ROOM_PEOPLE = 10;
 const AUTO_NEXT_MS = 8000;
 const ROOM_IDLE_MS = 30 * 60 * 1000;
+const REVIVAL_WINDOW_MS = 10_000;
 const TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
 const HOST_TOKEN_LIFETIME_SECONDS = 10 * 365 * 24 * 60 * 60;
 const MAX_BODY_BYTES = 16 * 1024;
@@ -547,107 +548,174 @@ function presentationEvent(room) {
   };
 }
 
-function clearRewindWindow(room) {
-  if (room.rewindTimer) {
-    clearTimeout(room.rewindTimer);
-    room.rewindTimer = null;
+function clearRevivalWindow(room) {
+  if (room.revivalTimer) {
+    clearTimeout(room.revivalTimer);
+    room.revivalTimer = null;
   }
-  room.rewindWindow = null;
+  room.revivalWindow = null;
 }
 
-function finalizeRewindWindow(room, broadcast) {
-  if (!room.rewindWindow) {
+function seatedRevivalCandidates(room) {
+  return Array.from(room.users.values()).filter(
+    (participant) =>
+      participant.seat !== null &&
+      participant.rewindEligible &&
+      !participant.leaving &&
+      !participant.pendingRemoval
+  );
+}
+
+function activeSeatedParticipants(room) {
+  return Array.from(room.users.values()).filter(
+    (participant) =>
+      participant.seat !== null &&
+      !participant.eliminated &&
+      !participant.leaving &&
+      !participant.pendingRemoval
+  );
+}
+
+function finishTableWithoutRevival(room) {
+  const remaining = activeSeatedParticipants(room);
+  if (remaining.length === 1) {
+    room.game.tableOver = {
+      status: "won",
+      winnerId: remaining[0].id,
+      winnerName: remaining[0].name,
+      reason: `${remaining[0].name} 成为最后的赢家`
+    };
+  } else {
+    room.game.tableOver = {
+      status: "ended",
+      reason: "所有玩家都已耗尽筹码"
+    };
+  }
+  if (room.game.summary) {
+    room.game.summary.tableOver = Engine.clone(room.game.tableOver);
+  }
+  room.status = "matchOver";
+  cancelAutoNext(room);
+  appendSystemChat(room, room.game.tableOver.reason);
+}
+
+function finalizeRevivalWindow(room, broadcast) {
+  const window = room.revivalWindow;
+  if (!window) {
     return;
   }
-  const window = room.rewindWindow;
-  window.requests.forEach((request, rewinderId) => {
-    if (request.status === "accepted") {
-      room.rewindViewers.set(rewinderId, request.targetId);
+  const candidates = seatedRevivalCandidates(room);
+  const decisions = new Map(window.decisions);
+  candidates.forEach((participant) => {
+    if (!decisions.has(participant.id)) {
+      decisions.set(participant.id, { accept: false, timedOut: true });
     }
   });
-  clearRewindWindow(room);
-  cancelPresentation(room);
-  if (room.game.phase === "bet2" && room.game.players.some((player) => player.drawCard)) {
-    startDrawPresentation(room, broadcast);
-    return;
-  }
-  if (room.game.phase === "complete") {
-    handleCompletedHand(room);
-    scheduleAutoNext(room, broadcast);
+  clearRevivalWindow(room);
+
+  decisions.forEach((decision, participantId) => {
+    const participant = room.users.get(participantId);
+    if (!participant?.rewindEligible || participant.seat === null) {
+      return;
+    }
+    if (decision.accept) {
+      participant.revivalsUsed += 1;
+      participant.rewindStage = participant.revivalsUsed;
+      participant.stack = room.startingChips;
+      participant.eliminated = false;
+      participant.rewindEligible = false;
+      participant.pendingSeatRelease = false;
+      participant.blockedFromSeat = false;
+      appendSystemChat(
+        room,
+        `${participant.name} 以 ${participant.revivalsUsed} 转回溯者身份复活，并获得 ${room.startingChips} 筹码。`
+      );
+    } else {
+      participant.stack = 0;
+      participant.eliminated = true;
+      participant.rewindEligible = true;
+      participant.rewindStage = participant.revivalsUsed + 1;
+      appendSystemChat(
+        room,
+        `${participant.name} ${
+          decision.timedOut ? "超时未选择" : "选择本手先旁观"
+        }，下一手开始前会再次询问。`
+      );
+    }
+  });
+
+  if (activeSeatedParticipants(room).length < 2) {
+    finishTableWithoutRevival(room);
     broadcast(room);
     return;
   }
-  room.status = "playing";
-  broadcast(room);
+  beginNextHand(room, broadcast);
 }
 
-function startRewindWindow(room, broadcast) {
-  const rewinders = Array.from(room.users.values()).filter(
-    (participant) => participant.rewindEligible && participant.connected
-  );
-  if (!rewinders.length) {
-    cancelPresentation(room);
-    if (
-      room.game.phase === "bet2" &&
-      room.game.players.some((player) => player.drawCard)
-    ) {
-      startDrawPresentation(room, broadcast);
-      return;
-    }
-    if (room.game.phase === "complete") {
-      handleCompletedHand(room);
-      scheduleAutoNext(room, broadcast);
+function startRevivalWindow(room, broadcast) {
+  const candidates = seatedRevivalCandidates(room);
+  if (!candidates.length) {
+    if (activeSeatedParticipants(room).length < 2) {
+      finishTableWithoutRevival(room);
       broadcast(room);
-      return;
+    } else {
+      beginNextHand(room, broadcast);
     }
-    room.status = "playing";
-    broadcast(room);
     return;
   }
-  clearRewindWindow(room);
-  room.rewindWindow = {
-    handNo: room.game.handNo,
-    deadline: Date.now() + 10_000,
-    requests: new Map()
+  clearRevivalWindow(room);
+  room.revivalWindow = {
+    handNo: room.game?.handNo ?? null,
+    deadline: Date.now() + (room.revivalWindowMs || REVIVAL_WINDOW_MS),
+    decisions: new Map(),
+    final: activeSeatedParticipants(room).length < 2
   };
-  room.status = "rewind";
+  room.status = "revival";
+  cancelAutoNext(room);
   room.lastActiveAt = Date.now();
   broadcast(room);
-  room.rewindTimer = setTimeout(() => {
-    if (room.rewindWindow) {
-      finalizeRewindWindow(room, broadcast);
-    }
-  }, 10_000);
-  room.rewindTimer.unref?.();
+  room.revivalTimer = setTimeout(
+    () => finalizeRevivalWindow(room, broadcast),
+    room.revivalWindowMs || REVIVAL_WINDOW_MS
+  );
+  room.revivalTimer.unref?.();
 }
 
-function maybeFinalizeRewindWindow(room, broadcast) {
-  if (!room.rewindWindow) {
+function maybeFinalizeRevivalWindow(room, broadcast) {
+  const window = room.revivalWindow;
+  if (!window) {
     return false;
   }
-  const pending = Array.from(room.rewindWindow.requests.values()).some(
-    (request) => request.status === "pending"
-  );
-  if (pending) {
-    return false;
-  }
-  const rewinders = Array.from(room.users.values()).filter(
-    (participant) => participant.rewindEligible && participant.connected
-  );
-  const resolved = rewinders.every((participant) =>
-    room.rewindWindow.requests.has(participant.id)
-  );
-  if (resolved) {
-    finalizeRewindWindow(room, broadcast);
+  const candidates = seatedRevivalCandidates(room);
+  if (
+    candidates.length &&
+    candidates.every((participant) =>
+      window.decisions.has(participant.id)
+    )
+  ) {
+    finalizeRevivalWindow(room, broadcast);
     return true;
   }
   return false;
 }
 
+function requestNextHand(room, broadcast) {
+  if (!room.game || room.game.phase !== "complete" || room.game.tableOver) {
+    throw new RequestError(409, "当前不能开始下一手。");
+  }
+  if (room.revivalWindow) {
+    return;
+  }
+  if (seatedRevivalCandidates(room).length) {
+    startRevivalWindow(room, broadcast);
+    return;
+  }
+  beginNextHand(room, broadcast);
+}
+
 function startInitialPresentation(room, broadcast) {
   cancelPresentation(room);
-  clearRewindWindow(room);
-  room.rewindViewers.clear();
+  clearRevivalWindow(room);
   const order = room.game.dealOrder.filter(
     (index) => !room.game.players[index].eliminated
   );
@@ -709,7 +777,13 @@ function startInitialPresentation(room, broadcast) {
       if (!room.presentation) {
         return;
       }
-        startRewindWindow(room, broadcast);
+      cancelPresentation(room);
+      room.status = "playing";
+      broadcast(room);
+      if (room.game.phase === "complete") {
+        handleCompletedHand(room);
+        scheduleAutoNext(room, broadcast);
+      }
     }, openingPauseMs);
   };
 
@@ -808,7 +882,7 @@ function scheduleAutoNext(room, broadcast) {
     room.game.phase !== "complete" ||
     room.game.tableOver ||
     room.paused ||
-    activeGameCount(room) < 2
+    (!seatedRevivalCandidates(room).length && activeGameCount(room) < 2)
   ) {
     return;
   }
@@ -817,7 +891,7 @@ function scheduleAutoNext(room, broadcast) {
     room.autoTimer = null;
     room.nextHandAt = null;
     try {
-      beginNextHand(room, broadcast);
+      requestNextHand(room, broadcast);
     } catch (error) {
       room.paused = true;
       broadcast(room, { type: "error", message: error.message });
@@ -873,8 +947,7 @@ function startNewMatch(room, broadcast) {
   Engine.startNextHand(room.game);
   room.paused = false;
   room.matchStartedAt = Date.now();
-  clearRewindWindow(room);
-  room.rewindViewers.clear();
+  clearRevivalWindow(room);
   cancelAutoNext(room);
   startInitialPresentation(room, broadcast);
 }
@@ -883,11 +956,6 @@ function handleCompletedHand(room) {
   if (!room.game || room.game.phase !== "complete") {
     return;
   }
-  const outrightWinnerIndex = room.game.summary?.outrightWinner;
-  const outrightWinner =
-    Number.isInteger(outrightWinnerIndex)
-      ? room.game.players[outrightWinnerIndex]
-      : null;
   for (const participant of room.users.values()) {
     if (participant.seat === null) {
       continue;
@@ -899,58 +967,31 @@ function handleCompletedHand(room) {
     if (gamePlayer && gamePlayer.eliminated) {
       participant.eliminated = true;
       participant.stack = 0;
-      if (participant.revivalsUsed < 3) {
+      if (!participant.rewindEligible) {
         participant.rewindEligible = true;
         participant.rewindStage = participant.revivalsUsed + 1;
         appendSystemChat(
           room,
-          `${participant.name} 已成为${participant.rewindStage}转回溯者。`
+          `${participant.name} 筹码耗尽，可在下一手开始前选择成为${participant.rewindStage}转回溯者。`
         );
-      } else {
-        participant.rewindEligible = false;
-        participant.rewindStage = 0;
-        participant.pendingSeatRelease = true;
-        appendSystemChat(room, `${participant.name} 已用完三次回溯，正式出局。`);
       }
+      participant.pendingSeatRelease = false;
+      participant.blockedFromSeat = false;
     } else if (gamePlayer) {
       participant.stack = gamePlayer.stack;
       participant.eliminated = false;
     }
     if (participant.pendingRemoval || participant.leaving) {
       participant.pendingSeatRelease = true;
+      participant.rewindEligible = false;
     }
   }
-  if (
-    outrightWinner &&
-    !room.game.tableOver
-  ) {
-    const acceptedRewinders = Array.from(room.rewindViewers.entries()).filter(
-      ([rewinderId, targetId]) => {
-        const rewinder = room.users.get(rewinderId);
-        return (
-          targetId === outrightWinner.id &&
-          rewinder?.rewindEligible &&
-          rewinder.revivalsUsed < 3
-        );
-      }
-    );
-    acceptedRewinders.forEach(([rewinderId]) => {
-      const rewinder = room.users.get(rewinderId);
-      rewinder.revivalsUsed += 1;
-      rewinder.stack = Math.max(1, Math.floor(room.startingChips / 2));
-      rewinder.eliminated = false;
-      rewinder.rewindEligible = false;
-      rewinder.pendingSeatRelease = false;
-      rewinder.blockedFromSeat = false;
-      appendSystemChat(
-        room,
-        `${rewinder.name} 因见证 ${outrightWinner.name} 获胜而复活，并获得 ${
-          room.startingChips / 2
-        } 筹码。`
-      );
-    });
+  if (seatedRevivalCandidates(room).length) {
+    room.game.tableOver = null;
+    if (room.game.summary) {
+      room.game.summary.tableOver = null;
+    }
   }
-  room.rewindViewers.clear();
   if (room.game.tableOver) {
     room.status = "matchOver";
     cancelAutoNext(room);
@@ -1050,17 +1091,11 @@ function makePublicGame(room, viewerId) {
       }
     });
   }
-  const rewindTargetId = room.rewindViewers.get(viewerId) || null;
   game.players.forEach((player) => {
     const isSelf = player.id === viewerId;
-    const rewindRevealed =
-      Boolean(rewindTargetId) &&
-      player.id === rewindTargetId &&
-      Boolean(player.holeCard);
     const revealed =
       !room.presentation && actualPhase === "complete" && player.revealed;
-    player.rewindRevealed = rewindRevealed;
-    if (!isSelf && !revealed && !rewindRevealed) {
+    if (!isSelf && !revealed) {
       player.hasHiddenHole = Boolean(player.holeCard);
       player.holeCard = null;
     }
@@ -1069,56 +1104,36 @@ function makePublicGame(room, viewerId) {
   return game;
 }
 
-function makeRewindView(room, participant) {
-  const window = room.rewindWindow;
-  if (!window || window.handNo !== room.game?.handNo) {
+function makeRevivalView(room, participant) {
+  const window = room.revivalWindow;
+  const selfEligible =
+    participant.rewindEligible && participant.seat !== null;
+  if (!window) {
     return {
       active: false,
-      selfEligible: Boolean(participant.rewindEligible),
-      targets: [],
-      outgoing: null,
-      incoming: [],
-      acceptedTargetId: room.rewindViewers.get(participant.id) || null,
-      deadline: null
+      selfEligible,
+      stage: participant.revivalsUsed + 1,
+      startingChips: room.startingChips,
+      deadline: null,
+      final: false,
+      decision: null
     };
   }
-  const targets = Array.from(room.users.values())
-    .filter(
-      (entry) =>
-        entry.seat !== null &&
-        !entry.eliminated &&
-        room.game &&
-        !room.game.players[entry.seat]?.eliminated
-    )
-    .map((entry) => ({
-      id: entry.id,
-      name: entry.name,
-      avatarUrl: entry.avatarUrl || "preset:jester",
-      seat: entry.seat
-    }));
-  const outgoing = window.requests.get(participant.id) || null;
-  const incoming = Array.from(window.requests.values())
-    .filter(
-      (request) =>
-        request.targetId === participant.id && request.status === "pending"
-    )
-    .map((request) => {
-      const rewinder = room.users.get(request.rewinderId);
-      return {
-        rewinderId: request.rewinderId,
-        rewinderName: rewinder?.name || "回溯者",
-        avatarUrl: rewinder?.avatarUrl || "preset:jester",
-        deadline: request.deadline
-      };
-    });
+  const decision = window.decisions.get(participant.id) || null;
   return {
     active: true,
-    selfEligible: Boolean(participant.rewindEligible),
-    targets,
-    outgoing,
-    incoming,
-    acceptedTargetId: room.rewindViewers.get(participant.id) || null,
-    deadline: window.deadline
+    selfEligible,
+    stage: participant.revivalsUsed + 1,
+    startingChips: room.startingChips,
+    deadline: window.deadline,
+    final: Boolean(window.final),
+    decision: decision
+      ? decision.accept
+        ? "accepted"
+        : "deferred"
+      : selfEligible
+        ? "pending"
+        : null
   };
 }
 
@@ -1192,7 +1207,7 @@ function makeRoomView(room, participant) {
       spectators: users.filter((entry) => entry.seat === null),
       rewinders: users.filter((entry) => entry.rewindEligible),
       self: users.find((entry) => entry.id === participant.id),
-      rewind: makeRewindView(room, participant),
+      revival: makeRevivalView(room, participant),
       chat: {
         enabled: room.chatEnabled,
         messages: room.chatMessages.slice(),
@@ -1219,6 +1234,8 @@ function createGameServer(options = {}) {
   const avatars = new Map();
   const requestBuckets = new Map();
   const defaultAutoNextMs = Number(options.autoNextMs) || AUTO_NEXT_MS;
+  const defaultRevivalWindowMs =
+    Number(options.revivalWindowMs) || REVIVAL_WINDOW_MS;
   const defaultDealTimings = Object.assign(
     {
       stepMs: 220,
@@ -1259,10 +1276,7 @@ function createGameServer(options = {}) {
 
   function deleteRoom(room) {
     cancelAutoNext(room);
-    if (room.rewindTimer) {
-      clearTimeout(room.rewindTimer);
-      room.rewindTimer = null;
-    }
+    clearRevivalWindow(room);
     if (room.presentationTimer) {
       clearTimeout(room.presentationTimer);
       room.presentationTimer = null;
@@ -1559,7 +1573,7 @@ function createGameServer(options = {}) {
         }
         startNewMatch(room, broadcast);
       } else if (room.game.phase === "complete") {
-        beginNextHand(room, broadcast);
+        requestNextHand(room, broadcast);
       }
       return;
     }
@@ -1744,68 +1758,30 @@ function createGameServer(options = {}) {
     }
   }
 
-  function handleRewindSelect(room, participant, message) {
-    if (!room.rewindWindow || room.rewindWindow.handNo !== room.game?.handNo) {
+  function handleRevivalDecide(room, participant, message) {
+    const window = room.revivalWindow;
+    if (!window) {
       throw new RequestError(409, "当前不在回溯选择阶段。");
     }
-    if (!participant.rewindEligible) {
-      throw new RequestError(403, "只有回溯者可以发起查看请求。");
-    }
-    if (room.rewindWindow.requests.has(participant.id)) {
-      throw new RequestError(409, "本手已经提交过回溯选择。");
-    }
-    if (!message.targetId) {
-      room.rewindWindow.requests.set(participant.id, {
-        rewinderId: participant.id,
-        targetId: null,
-        status: "skipped",
-        createdAt: Date.now(),
-        deadline: room.rewindWindow.deadline
-      });
-      maybeFinalizeRewindWindow(room, broadcast);
-      return;
-    }
-    const target = room.users.get(String(message.targetId));
     if (
-      !target ||
-      target.id === participant.id ||
-      target.seat === null ||
-      target.eliminated ||
-      target.rewindEligible ||
-      !room.game ||
-      room.game.players[target.seat]?.eliminated
+      !participant.rewindEligible ||
+      participant.seat === null ||
+      participant.pendingRemoval ||
+      participant.leaving
     ) {
-      throw new RequestError(400, "请选择一名当前在座玩家。");
+      throw new RequestError(403, "你当前没有回溯选择资格。");
     }
-    room.rewindWindow.requests.set(participant.id, {
-      rewinderId: participant.id,
-      targetId: target.id,
-      status: "pending",
-      createdAt: Date.now(),
-      deadline: Math.min(Date.now() + 10_000, room.rewindWindow.deadline)
+    if (window.decisions.has(participant.id)) {
+      throw new RequestError(409, "本次回溯选择已经提交。");
+    }
+    if (Date.now() > window.deadline) {
+      throw new RequestError(409, "回溯选择已经结束。");
+    }
+    window.decisions.set(participant.id, {
+      accept: Boolean(message.accept),
+      decidedAt: Date.now()
     });
-    broadcast(room);
-  }
-
-  function handleRewindRespond(room, participant, message) {
-    if (!room.rewindWindow) {
-      throw new RequestError(409, "回溯请求已经结束。");
-    }
-    const request = room.rewindWindow.requests.get(
-      String(message.rewinderId || "")
-    );
-    if (!request || request.targetId !== participant.id) {
-      throw new RequestError(404, "找不到发给你的回溯请求。");
-    }
-    if (request.status !== "pending" || request.deadline < Date.now()) {
-      throw new RequestError(409, "这个回溯请求已经过期。");
-    }
-    request.status = message.accepted ? "accepted" : "declined";
-    request.respondedAt = Date.now();
-    if (message.accepted) {
-      room.rewindViewers.set(request.rewinderId, participant.id);
-    }
-    if (maybeFinalizeRewindWindow(room, broadcast)) {
+    if (maybeFinalizeRevivalWindow(room, broadcast)) {
       return;
     }
     broadcast(room);
@@ -1864,10 +1840,8 @@ function createGameServer(options = {}) {
         renameParticipant(room, participant, message.name);
       } else if (message.type === "early-fold") {
         handleEarlyFold(room, participant, message);
-      } else if (message.type === "rewind:select") {
-        handleRewindSelect(room, participant, message);
-      } else if (message.type === "rewind:respond") {
-        handleRewindRespond(room, participant, message);
+      } else if (message.type === "revival:decide") {
+        handleRevivalDecide(room, participant, message);
       } else if (message.type === "chat:send") {
         handleChatMessage(room, participant, message);
       } else if (message.type === "emote:throw") {
@@ -1951,7 +1925,9 @@ function createGameServer(options = {}) {
         participant.socket = null;
         participant.connected = false;
         touchRoom(room);
-        broadcast(room);
+        if (!maybeFinalizeRevivalWindow(room, broadcast)) {
+          broadcast(room);
+        }
       }
     });
   });
@@ -2066,6 +2042,7 @@ function createGameServer(options = {}) {
           status: "lobby",
           paused: false,
           autoNextMs: defaultAutoNextMs,
+          revivalWindowMs: defaultRevivalWindowMs,
           dealTimings: defaultDealTimings,
           nextHandAt: null,
           autoTimer: null,
@@ -2078,9 +2055,8 @@ function createGameServer(options = {}) {
           chatEnabled: true,
           chatMessages: [],
           chatSequence: 0,
-      rewindWindow: null,
-      rewindTimer: null,
-      rewindViewers: new Map(),
+          revivalWindow: null,
+          revivalTimer: null,
           avatarIds: new Set(),
           createdAt: now,
           lastActiveAt: now,

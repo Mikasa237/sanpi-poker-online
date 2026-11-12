@@ -1078,6 +1078,7 @@
       return {
         level,
         amount,
+        contributors: contributors.map((entry) => entry.index),
         eligible: contributors
           .filter((entry) => !entry.player.folded)
           .map((entry) => entry.index)
@@ -1089,7 +1090,6 @@
     const layers = createPotLayers(state);
     const awards = new Map();
     const settlements = [];
-    let carriedAmount = 0;
 
     layers.forEach((layer, layerIndex) => {
       let winners = [];
@@ -1117,35 +1117,48 @@
         winners = layer.eligible.filter((index) => forcedWinners.includes(index));
       }
       if (!winners.length) {
-        carriedAmount += layer.amount;
+        const fallback = winnerClubhouseOrder(
+          state,
+          layer.contributors.length
+            ? layer.contributors
+            : layer.eligible
+        );
+        if (fallback.length && layer.amount > 0) {
+          const share = Math.floor(layer.amount / fallback.length);
+          const remainder = layer.amount - share * fallback.length;
+          fallback.forEach((index, offset) => {
+            const amount = share + (offset < remainder ? 1 : 0);
+            state.players[index].stack += amount;
+            awards.set(index, (awards.get(index) || 0) + amount);
+          });
+        }
         settlements.push({
           index: layerIndex,
           level: layer.level,
           amount: layer.amount,
           eligible: layer.eligible.slice(),
-          winners: [],
-          carried: true
+          winners: fallback.slice(),
+          refunded: true,
+          carried: false
         });
         return;
       }
       winners = winnerClubhouseOrder(state, winners);
       if (winners.length > 1) {
-        carriedAmount += layer.amount;
-        settlements.push({
-          index: layerIndex,
-          level: layer.level,
-          amount: layer.amount,
-          eligible: layer.eligible.slice(),
-          winners: winners.slice(),
-          carried: true
+        const share = Math.floor(layer.amount / winners.length);
+        const remainder = layer.amount - share * winners.length;
+        winners.forEach((index, offset) => {
+          const amount = share + (offset < remainder ? 1 : 0);
+          state.players[index].stack += amount;
+          awards.set(index, (awards.get(index) || 0) + amount);
         });
-        return;
-      }
-      const index = winners[0];
-      const amount = layer.amount;
-      if (amount > 0) {
-        state.players[index].stack += amount;
-        awards.set(index, (awards.get(index) || 0) + amount);
+      } else {
+        const index = winners[0];
+        const amount = layer.amount;
+        if (amount > 0) {
+          state.players[index].stack += amount;
+          awards.set(index, (awards.get(index) || 0) + amount);
+        }
       }
       settlements.push({
         index: layerIndex,
@@ -1159,7 +1172,6 @@
 
     return {
       settlements,
-      carriedAmount,
       awards: Array.from(awards.entries()).map(([index, amount]) => ({
         playerIndex: index,
         playerId: state.players[index].id,
@@ -1250,12 +1262,8 @@
 
     const carryPotIn = state.carryPot || 0;
     const potTotal = roundPot(state.players) + carryPotIn;
-    const payout = settlePots(
-      state,
-      evaluationsByPlayer,
-      showdown ? null : alive
-    );
     let outrightWinner = null;
+    let tiedWinners = [];
     if (showdown && evaluations.length) {
       const top = evaluations[0].evaluation;
       const topEntries = evaluations.filter(
@@ -1263,19 +1271,53 @@
       );
       if (topEntries.length === 1) {
         outrightWinner = topEntries[0].playerIndex;
+      } else {
+        tiedWinners = winnerClubhouseOrder(
+          state,
+          topEntries.map((entry) => entry.playerIndex)
+        );
       }
     } else if (!showdown && alive.length === 1) {
       outrightWinner = alive[0];
     }
-    const awardsByPlayer = new Map(
-      payout.awards.map((award) => [award.playerIndex, award.amount])
-    );
-    if (outrightWinner !== null && carryPotIn > 0) {
-      state.players[outrightWinner].stack += carryPotIn;
-      awardsByPlayer.set(
-        outrightWinner,
-        (awardsByPlayer.get(outrightWinner) || 0) + carryPotIn
+    const awardsByPlayer = new Map();
+    let settlements = [];
+    if (tiedWinners.length) {
+      const share = Math.floor(potTotal / tiedWinners.length);
+      const remainder = potTotal - share * tiedWinners.length;
+      tiedWinners.forEach((playerIndex, offset) => {
+        const amount = share + (offset < remainder ? 1 : 0);
+        state.players[playerIndex].stack += amount;
+        awardsByPlayer.set(playerIndex, amount);
+      });
+      settlements = [
+        {
+          index: 0,
+          level: null,
+          amount: potTotal,
+          eligible: tiedWinners.slice(),
+          winners: tiedWinners.slice(),
+          tiedShowdown: true,
+          carried: false
+        }
+      ];
+    } else {
+      const payout = settlePots(
+        state,
+        evaluationsByPlayer,
+        showdown ? null : alive
       );
+      payout.awards.forEach((award) => {
+        awardsByPlayer.set(award.playerIndex, award.amount);
+      });
+      if (outrightWinner !== null && carryPotIn > 0) {
+        state.players[outrightWinner].stack += carryPotIn;
+        awardsByPlayer.set(
+          outrightWinner,
+          (awardsByPlayer.get(outrightWinner) || 0) + carryPotIn
+        );
+      }
+      settlements = payout.settlements;
     }
     const awards = Array.from(awardsByPlayer.entries()).map(
       ([playerIndex, amount]) => ({
@@ -1285,9 +1327,12 @@
         amount
       })
     );
-    const carryPotOut =
-      (outrightWinner === null ? carryPotIn : 0) + payout.carriedAmount;
-    state.carryPot = carryPotOut;
+    const winnerIndices = tiedWinners.length
+      ? tiedWinners.slice()
+      : outrightWinner !== null
+        ? [outrightWinner]
+        : awards.map((award) => award.playerIndex);
+    state.carryPot = 0;
     const tableOver = updateEliminations(state);
     state.phase = "complete";
     state.actorIndex = null;
@@ -1299,12 +1344,13 @@
       showdown,
       potTotal,
       evaluations,
-      settlements: payout.settlements,
+      settlements,
       awards,
-      winners: awards.map((award) => award.playerIndex),
+      winners: winnerIndices,
       outrightWinner,
+      tiedShowdown: tiedWinners.length > 0,
       carryPotIn,
-      carryPotOut,
+      carryPotOut: 0,
       startingStacks: state.startingStacks.slice(),
       tableOver: tableOver ? clone(tableOver) : null
     };
@@ -1316,7 +1362,7 @@
       "result",
       null,
       `第 ${state.handNo} 手结束，${reason}。${awardText || "底池为空"}。${
-        carryPotOut ? `累计底池保留 ${carryPotOut}。` : ""
+        tiedWinners.length ? "并列最大，底池已平均分池。" : ""
       }`
     );
     return state;

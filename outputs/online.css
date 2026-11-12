@@ -864,13 +864,6 @@
   opacity: 0.58;
 }
 
-.online-table-shell .seat.is-rewind-revealed {
-  border-color: rgba(115, 209, 174, 0.75);
-  box-shadow:
-    0 0 0 2px rgba(115, 209, 174, 0.12),
-    0 12px 30px rgba(0, 0, 0, 0.36);
-}
-
 .online-table-shell .offline-badge {
   color: #f0d7d3;
   background: #88403c;
@@ -1534,30 +1527,14 @@
   line-height: 1.5;
 }
 
-.rewind-actions,
-.rewind-incoming {
+.rewind-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.rewind-actions select {
-  min-width: 130px;
-  flex: 1;
-}
-
-.rewind-incoming {
-  align-items: center;
-  padding: 8px;
-  border: 1px solid rgba(240, 207, 138, 0.24);
-  border-radius: 9px;
-  background: rgba(215, 170, 87, 0.08);
-}
-
-.rewind-incoming p {
-  width: 100%;
-  margin: 0;
-  font-size: 0.67rem;
+.revival-actions > * {
+  flex: 1 1 125px;
 }
 
 .rewind-view-notice {

@@ -1192,14 +1192,16 @@
       el.resultTitle.textContent = "筹码耗尽，本局失败";
     } else if (game.tableOver?.status === "won") {
       el.resultTitle.textContent = "你赢下了整桌";
+    } else if (humanAward && summary.tiedShowdown) {
+      el.resultTitle.textContent = `平局分池，你获得 ${formatNumber(
+        humanAward.amount
+      )} 筹码`;
     } else if (humanAward) {
       el.resultTitle.textContent = `你赢得 ${formatNumber(humanAward.amount)} 筹码`;
+    } else if (summary.tiedShowdown) {
+      el.resultTitle.textContent = "并列最大，底池已平均分池";
     } else if (summary.awards.length === 1) {
       el.resultTitle.textContent = `${summary.awards[0].name} 收下底池`;
-    } else if (!summary.awards.length && summary.carryPotOut > 0) {
-      el.resultTitle.textContent = `平局，${formatNumber(
-        summary.carryPotOut
-      )} 筹码保留到下一手`;
     } else {
       el.resultTitle.textContent = "底池已按边池结算";
     }
@@ -1236,7 +1238,11 @@
           .join("、");
         return `<div class="result-detail-line"><span>${
           pot.index === 0 ? "主池" : `边池 ${pot.index}`
-        } · ${pot.carried ? "并列，结转下一手" : escapeHtml(winnerNames)}</span><span>${formatNumber(
+        } · ${
+          pot.tiedShowdown
+            ? "并列最大，平均分池"
+            : escapeHtml(winnerNames)
+        }</span><span>${formatNumber(
           pot.amount
         )}</span></div>`;
       })

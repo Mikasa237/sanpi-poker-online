@@ -215,19 +215,14 @@
     "onlineTurnAlert",
     "onlineTurnAlertText",
     "onlineGoToActionButton",
-    "rewindPanel",
-    "rewindTitle",
-    "rewindCountdown",
-    "rewindDescription",
-    "rewindSelectArea",
-    "rewindTargetSelect",
-    "rewindRequestButton",
-    "rewindSkipButton",
-    "rewindIncomingArea",
-    "rewindIncomingText",
-    "rewindAcceptButton",
-    "rewindDeclineButton",
-    "rewindViewNotice",
+    "revivalPanel",
+    "revivalTitle",
+    "revivalCountdown",
+    "revivalDescription",
+    "revivalActions",
+    "revivalAcceptButton",
+    "revivalDeferButton",
+    "revivalDecisionNotice",
     "onlineSeatLayer",
     "onlineHumanHandZone",
     "spectatorNotice",
@@ -1899,8 +1894,7 @@
       player.folded ? "is-folded" : "",
       player.eliminated ? "is-eliminated" : "",
       !connected ? "is-offline" : "",
-      isWinner ? "is-winner" : "",
-      player.rewindRevealed ? "is-rewind-revealed" : ""
+      isWinner ? "is-winner" : ""
     ]
       .filter(Boolean)
       .join(" ");
@@ -2167,8 +2161,8 @@
     const actor =
       game.actorIndex !== null ? game.players[game.actorIndex] : null;
     el.headerRoomCode.textContent = state.room.code;
-    el.onlinePhaseText.textContent = state.room.status === "rewind"
-      ? "回溯选择阶段"
+    el.onlinePhaseText.textContent = state.room.status === "revival"
+      ? "回溯复活选择"
       : game.tableOver
       ? "本局结束"
       : game.presentation?.kind === "initial"
@@ -2208,9 +2202,9 @@
       "has-card",
       Boolean(game.discardCard || game.hasDiscard)
     );
-    if (state.room.status === "rewind") {
+    if (state.room.status === "revival") {
       el.onlineTableHint.textContent =
-        "回溯者可选择查看目标，发牌在下注前暂时等待。";
+        "下一手开始前，回溯候选正在选择是否复活。";
     } else if (game.tableOver) {
       el.onlineTableHint.textContent = game.tableOver.reason;
     } else if (game.presentation) {
@@ -2475,67 +2469,36 @@
     );
   }
 
-  function renderRewind(room) {
-    const info = room?.rewind;
+  function renderRevival(room) {
+    const info = room?.revival;
     const active = Boolean(info?.active);
-    const acceptedTarget = info?.acceptedTargetId
-      ? room.users.find((user) => user.id === info.acceptedTargetId)
-      : null;
-    const incoming = info?.incoming?.[0] || null;
-    const show =
-      active &&
-      (info.selfEligible || info.incoming?.length || info.outgoing);
-    el.rewindPanel.hidden = !show && !acceptedTarget;
-    if (el.rewindPanel.hidden) {
+    el.revivalPanel.hidden = !active || !info.selfEligible;
+    if (el.revivalPanel.hidden) {
       return;
     }
-    const remaining = active
-      ? Math.max(0, Math.ceil((info.deadline - Date.now()) / 1000))
-      : 0;
-    el.rewindCountdown.textContent = active ? `${remaining}s` : "";
-    if (acceptedTarget) {
-      el.rewindTitle.textContent = `回溯视界：${acceptedTarget.name}`;
-      el.rewindDescription.textContent =
-        "对方已同意，你可以在本手看到其底牌；该信息只显示在你的浏览器。";
-      el.rewindSelectArea.hidden = true;
-      el.rewindIncomingArea.hidden = true;
-      el.rewindViewNotice.hidden = false;
-      el.rewindViewNotice.textContent = `正在查看 ${acceptedTarget.name} 的底牌`;
-      return;
-    }
-    el.rewindViewNotice.hidden = true;
-    el.rewindSelectArea.hidden = !(info.selfEligible && !info.outgoing);
-    el.rewindIncomingArea.hidden = !incoming;
-    el.rewindTitle.textContent = "回溯选择";
-    el.rewindDescription.textContent =
-      "你可以选择一名在座玩家，对方同意后查看其本手底牌。";
-    if (info.selfEligible && !info.outgoing) {
-      el.rewindTargetSelect.innerHTML = info.targets
-        .map(
-          (target) =>
-            `<option value="${escapeHtml(target.id)}">${escapeHtml(
-              target.name
-            )}</option>`
-        )
-        .join("");
-      el.rewindRequestButton.disabled = !info.targets.length;
-      el.rewindSkipButton.disabled = false;
-    }
-    if (info.outgoing) {
-      const target = room.users.find(
-        (user) => user.id === info.outgoing.targetId
-      );
-      el.rewindDescription.textContent =
-        info.outgoing.status === "pending"
-          ? `已请求 ${target?.name || "对方"}，等待同意。`
-          : info.outgoing.status === "accepted"
-            ? `${target?.name || "对方"} 已同意。`
-            : info.outgoing.status === "declined"
-              ? `${target?.name || "对方"} 拒绝了查看请求。`
-              : "本手选择不回溯。";
-    }
-    if (incoming) {
-      el.rewindIncomingText.textContent = `${incoming.rewinderName} 请求查看你的底牌，是否同意？`;
+    const remaining = Math.max(
+      0,
+      Math.ceil((Number(info.deadline) - Date.now()) / 1000)
+    );
+    el.revivalCountdown.textContent = `${remaining}s`;
+    el.revivalTitle.textContent = `成为 ${info.stage} 转回溯者？`;
+    el.revivalDescription.textContent = info.final
+      ? `接受后恢复 ${formatNumber(
+          info.startingChips
+        )} 筹码并回到原座。这是最终选择；若无人接受，本桌将结束。`
+      : `接受后恢复 ${formatNumber(
+          info.startingChips
+        )} 筹码并从下一手回到原座；选择旁观后，下一手前会再次询问。`;
+    const decided = info.decision === "accepted" || info.decision === "deferred";
+    el.revivalActions.hidden = decided;
+    el.revivalAcceptButton.disabled = decided || remaining <= 0;
+    el.revivalDeferButton.disabled = decided || remaining <= 0;
+    el.revivalDecisionNotice.hidden = !decided;
+    if (decided) {
+      el.revivalDecisionNotice.textContent =
+        info.decision === "accepted"
+          ? `已选择成为 ${info.stage} 转回溯者，等待下一手发牌。`
+          : "已选择本手旁观，下一手开始前会再次询问。";
     }
   }
 
@@ -2605,16 +2568,18 @@
       el.onlineResultTitle.textContent = "你赢下了整桌";
     } else if (selfPlayer?.eliminated) {
       el.onlineResultTitle.textContent = selfUser?.rewindEligible
-        ? `${selfUser.rewindStage}转回溯者，可在下一手申请查看`
+        ? `${selfUser.rewindStage}转回溯候选，可在下一手开始前选择复活`
         : "筹码耗尽，已退出座位";
+    } else if (selfAward && summary.tiedShowdown) {
+      el.onlineResultTitle.textContent = `平局分池，你获得 ${formatNumber(
+        selfAward.amount
+      )} 筹码`;
     } else if (selfAward) {
       el.onlineResultTitle.textContent = `你赢得 ${formatNumber(selfAward.amount)} 筹码`;
+    } else if (summary.tiedShowdown) {
+      el.onlineResultTitle.textContent = "并列最大，底池已平均分池";
     } else if (summary.awards.length === 1) {
       el.onlineResultTitle.textContent = `${summary.awards[0].name} 收下底池`;
-    } else if (!summary.awards.length && summary.carryPotOut > 0) {
-      el.onlineResultTitle.textContent = `平局，${formatNumber(
-        summary.carryPotOut
-      )} 筹码保留到下一手`;
     } else {
       el.onlineResultTitle.textContent = "本手结算";
     }
@@ -2648,7 +2613,11 @@
           .join("、");
         return `<div class="result-detail-line"><span>${
           pot.index === 0 ? "主池" : `边池 ${pot.index}`
-        } · ${pot.carried ? "并列，结转下一手" : escapeHtml(names)}</span><span>${formatNumber(
+        } · ${
+          pot.tiedShowdown
+            ? "并列最大，平均分池"
+            : escapeHtml(names)
+        }</span><span>${formatNumber(
           pot.amount
         )}</span></div>`;
       })
@@ -2668,7 +2637,7 @@
   function updateCountdown() {
     const room = state.room;
     if (room?.game) {
-      renderRewind(room);
+      renderRevival(room);
     }
     if (!room?.game || room.game.phase !== "complete" || !room.nextHandAt) {
       el.onlineNextHint.textContent = room?.paused
@@ -2928,7 +2897,7 @@
     state.mobileToolsOpen = false;
     el.mobileToolsButton.hidden = true;
     syncMobileDrawers();
-    el.rewindPanel.hidden = true;
+    el.revivalPanel.hidden = true;
     el.onlineTurnAlert.hidden = true;
     document.body.classList.remove("is-my-turn");
     if (document.title.startsWith("●")) {
@@ -3054,7 +3023,7 @@
     renderGameSeats(game);
     renderGameCenter(game);
     renderShuffleCeremony(game);
-    renderRewind(room);
+    renderRevival(room);
     renderActionControls();
     renderResult(game);
     renderHostControls();
@@ -3389,34 +3358,11 @@
         enabled: !state.room.chat.enabled
       });
     });
-    el.rewindRequestButton.addEventListener("click", () => {
-      const targetId = el.rewindTargetSelect.value;
-      if (targetId) {
-        sendMessage({ type: "rewind:select", targetId });
-      }
+    el.revivalAcceptButton.addEventListener("click", () => {
+      sendMessage({ type: "revival:decide", accept: true });
     });
-    el.rewindSkipButton.addEventListener("click", () => {
-      sendMessage({ type: "rewind:select", targetId: null });
-    });
-    el.rewindAcceptButton.addEventListener("click", () => {
-      const request = state.room?.rewind?.incoming?.[0];
-      if (request) {
-        sendMessage({
-          type: "rewind:respond",
-          rewinderId: request.rewinderId,
-          accepted: true
-        });
-      }
-    });
-    el.rewindDeclineButton.addEventListener("click", () => {
-      const request = state.room?.rewind?.incoming?.[0];
-      if (request) {
-        sendMessage({
-          type: "rewind:respond",
-          rewinderId: request.rewinderId,
-          accepted: false
-        });
-      }
+    el.revivalDeferButton.addEventListener("click", () => {
+      sendMessage({ type: "revival:decide", accept: false });
     });
     el.lobbyStartButton.addEventListener("click", () =>
       sendHostCommand(

@@ -6,7 +6,9 @@ const { chromium } = require("./browser-tools/node_modules/playwright-core");
 
 process.env.SESSION_SECRET = "identity-orientation-test-secret";
 process.env.HOST_ISSUE_SECRET = "identity-orientation-host-secret";
-const { createGameServer } = require("../outputs/server.js");
+const { createGameServer, handleCompletedHand } = require(
+  "../outputs/server.js"
+);
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const SCREENSHOT_ROOT = __dirname;
@@ -58,6 +60,17 @@ async function assertNoHorizontalScroll(page, label) {
     dimensions.scrollWidth <= dimensions.clientWidth + 1,
     `${label} horizontal overflow: ${JSON.stringify(dimensions)}`
   );
+}
+
+async function waitUntil(predicate, label, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
 }
 
 async function assertUprightHandCards(page, label) {
@@ -308,6 +321,7 @@ async function main() {
   assert.equal(await page.locator("#onlineHumanHandZone").isVisible(), true);
   await page.setViewportSize({ width: 768, height: 320 });
   await assertNoHorizontalScroll(page, "768x320 landscape");
+  await page.locator("#orientationAutoButton").click();
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.locator("#orientationPrompt").waitFor({ state: "hidden" });
   assert.equal(
@@ -341,6 +355,54 @@ async function main() {
   await assertNoHorizontalScroll(legacyPage, "320x700 identity entry");
   await legacyContext.close();
 
+  const revivalRoomCode = page.url().split("/").pop();
+  const room = runningApp.rooms.get(revivalRoomCode);
+  const host = room.users.get(room.hostId);
+  const hostSeat = host.seat;
+  room.game.players[hostSeat].eliminated = true;
+  room.game.players[hostSeat].stack = 0;
+  room.game.phase = "complete";
+  room.game.tableOver = null;
+  room.game.summary = {
+    handNo: room.game.handNo,
+    reason: "回溯界面测试",
+    showdown: false,
+    potTotal: 10,
+    evaluations: [],
+    settlements: [],
+    outrightWinner: 0,
+    winners: [0],
+    awards: [{ playerIndex: 0, playerId: "", name: "测试", amount: 10 }],
+    carryPotIn: 0,
+    carryPotOut: 0,
+    startingStacks: []
+  };
+  handleCompletedHand(room);
+  await page.evaluate(() =>
+    localStorage.setItem("sanpi-online-orientation", "auto")
+  );
+  await page.reload();
+  await waitForRoom(page);
+  await page.locator("#hostStartNowButton").dispatchEvent("click");
+  await page.locator("#revivalPanel").waitFor({ state: "visible" });
+  assert.match(
+    await page.locator("#revivalTitle").textContent(),
+    /成为 1 转回溯者/
+  );
+  assert.match(
+    await page.locator("#revivalDescription").textContent(),
+    /1,000/
+  );
+  await page.locator("#revivalAcceptButton").click();
+  await waitUntil(
+    () => !host.eliminated && host.revivalsUsed === 1,
+    "browser revival acceptance"
+  );
+  assert.equal(host.revivalsUsed, 1);
+  assert.equal(host.stack, 1000);
+  assert.equal(host.seat, hostSeat);
+  assert.equal(host.eliminated, false);
+
   assert.deepEqual(errors, []);
   await browser.close();
   runningBrowser = null;
@@ -352,6 +414,7 @@ async function main() {
       sessionRefresh: "reconnected without PIN",
       identityReset: "room sessions cleared, host token preserved",
       legacyProfileMigration: "name and avatar prefilled",
+      revivalUi: "prompt shown before deal and full stack restored",
       orientations: ["auto", "portrait", "landscape"],
       landscapeSeats: 9,
       errors

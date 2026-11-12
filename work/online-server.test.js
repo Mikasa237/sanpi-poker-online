@@ -17,6 +17,7 @@ async function startServer(options = {}) {
   const app = createGameServer(
     Object.assign(
       {
+        revivalWindowMs: 250,
         dealTimings: {
           stepMs: 5,
           roundGapMs: 5,
@@ -996,12 +997,12 @@ test("a player can fold early before their turn", async (t) => {
   thirdClient.close();
 });
 
-test("rewind consent reveals only the approved hole card and revives on a win", async (t) => {
+test("revival decision happens before dealing and restores the full starting stack", async (t) => {
   const server = await startServer();
   t.after(() => server.app.close());
 
-  const hostRoom = await createRoom(server.baseUrl, "回溯测试房主", 3);
-  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "目标玩家");
+  const hostRoom = await createRoom(server.baseUrl, "复活房主", 3);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "复活访客");
   const ghostJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "回溯玩家");
   const hostClient = await createClient(
     server.baseUrl,
@@ -1027,82 +1028,276 @@ test("rewind consent reveals only the approved hole card and revives on a win", 
 
   const room = server.app.rooms.get(hostRoom.roomCode);
   const ghost = room.users.get(ghostJoin.payload.userId);
-  const target = room.users.get(guestJoin.payload.userId);
-  const ghostPlayer = room.game.players[ghost.seat];
-  ghostPlayer.eliminated = true;
-  ghostPlayer.stack = 0;
-  room.game.summary = {
-    outrightWinner: target.seat,
-    winners: [target.seat],
-    awards: [{ playerIndex: target.seat, amount: 10 }]
-  };
-  room.game.tableOver = null;
-  room.game.phase = "complete";
-  handleCompletedHand(room);
-  assert.equal(ghost.rewindEligible, true);
-  assert.equal(ghost.rewindStage, 1);
-  assert.ok(room.chatMessages.some((message) => /1转回溯者/.test(message.text)));
-
-  room.game.phase = "bet1";
-  room.rewindWindow = {
-    handNo: room.game.handNo,
-    deadline: Date.now() + 10000,
-    requests: new Map()
-  };
-  room.status = "rewind";
-  ghostClient.send({ type: "rewind:select", targetId: target.id });
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  const request = room.rewindWindow.requests.get(ghost.id);
-  assert.equal(
-    request.rewinderId,
-    ghost.id,
-    JSON.stringify(Array.from(room.rewindWindow.requests.entries()))
-  );
-  assert.equal(request.targetId, target.id);
-  guestClient.send({
-    type: "rewind:respond",
-    rewinderId: ghost.id,
-    accepted: true
-  });
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  assert.equal(room.rewindViewers.get(ghost.id), target.id);
-  const approved = makePublicGame(room, ghost.id);
-  assert.equal(approved.players[target.seat].rewindRevealed, true);
-  assert.ok(approved.players[target.seat].holeCard);
-  const other = approved.players.find(
-    (player) =>
-      !player.id.startsWith("empty-") &&
-      player.id !== target.id &&
-      player.id !== ghost.id
-  );
-  assert.equal(other.holeCard, null);
-
-  room.game.summary = {
-    outrightWinner: target.seat,
-    winners: [target.seat],
-    awards: [{ playerIndex: target.seat, amount: 20 }]
-  };
-  room.game.tableOver = null;
-  room.game.phase = "complete";
-  handleCompletedHand(room);
-  assert.equal(ghost.revivalsUsed, 1);
-  assert.equal(ghost.stack, 500);
-  assert.equal(ghost.eliminated, false);
-  assert.equal(ghost.rewindEligible, false);
-
+  const originalHandNo = room.game.handNo;
+  const originalSeat = ghost.seat;
   ghost.revivalsUsed = 3;
-  ghost.eliminated = true;
-  ghost.rewindEligible = true;
   room.game.players[ghost.seat].eliminated = true;
   room.game.players[ghost.seat].stack = 0;
+  room.game.summary = {
+    outrightWinner: 0,
+    winners: [0],
+    awards: [{ playerIndex: 0, amount: 10 }]
+  };
   room.game.tableOver = null;
+  room.game.phase = "complete";
   handleCompletedHand(room);
+
+  assert.equal(ghost.rewindEligible, true);
+  assert.equal(ghost.rewindStage, 4);
+  assert.equal(ghost.seat, originalSeat);
+  const hiddenView = makePublicGame(room, ghost.id);
+  assert.equal(
+    hiddenView.players.some(
+      (player) =>
+        player.id !== ghost.id &&
+        !player.id.startsWith("empty-") &&
+        player.holeCard
+    ),
+    false
+  );
+
+  hostClient.send({ type: "host:start" });
+  const prompt = await ghostClient.waitFor(
+    (message) =>
+      message.room?.revival?.active &&
+      message.room.revival.selfEligible &&
+      message.room.revival.stage === 4
+  );
+  assert.equal(prompt.room.game.handNo, originalHandNo);
+  assert.equal(prompt.room.revival.startingChips, 1000);
+  assert.equal(prompt.room.revival.decision, "pending");
+
+  ghostClient.send({ type: "revival:decide", accept: true });
+  await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.handNo === originalHandNo + 1 &&
+      message.room.game.presentation?.kind === "initial"
+  );
+  assert.equal(ghost.revivalsUsed, 4);
+  assert.equal(ghost.rewindStage, 4);
+  assert.equal(ghost.stack, 1000);
+  assert.equal(ghost.eliminated, false);
   assert.equal(ghost.rewindEligible, false);
-  assert.equal(ghost.pendingSeatRelease, true);
+  assert.equal(ghost.seat, originalSeat);
+  assert.ok(
+    room.chatMessages.some((message) => /4 转回溯者身份复活/.test(message.text))
+  );
 
   hostClient.close();
   guestClient.close();
   ghostClient.close();
+});
+
+test("a rewinder can defer, keep the seat, and be prompted again next hand", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "旁观房主", 3);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "旁观访客");
+  const ghostJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "暂缓回溯者");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  const ghostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    ghostJoin.payload.token
+  );
+  hostClient.send({ type: "host:start" });
+  await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
+  );
+
+  const room = server.app.rooms.get(hostRoom.roomCode);
+  const ghost = room.users.get(ghostJoin.payload.userId);
+  const seat = ghost.seat;
+  room.game.players[seat].eliminated = true;
+  room.game.players[seat].stack = 0;
+  room.game.tableOver = null;
+  room.game.phase = "complete";
+  handleCompletedHand(room);
+
+  hostClient.send({ type: "host:start" });
+  await ghostClient.waitFor(
+    (message) => message.room?.revival?.active && message.room.revival.selfEligible
+  );
+  ghostClient.send({ type: "revival:decide", accept: false });
+  const nextHand = await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.presentation?.kind === "initial" &&
+      message.room.revival.active === false
+  );
+  assert.equal(ghost.eliminated, true);
+  assert.equal(ghost.rewindEligible, true);
+  assert.equal(ghost.rewindStage, 1);
+  assert.equal(ghost.seat, seat);
+  assert.equal(ghost.stack, 0);
+
+  await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
+  );
+  room.game.phase = "complete";
+  room.game.tableOver = null;
+  room.game.summary = {
+    outrightWinner: 0,
+    winners: [0],
+    awards: [{ playerIndex: 0, amount: 10 }]
+  };
+  handleCompletedHand(room);
+  hostClient.send({ type: "host:start" });
+  const promptedAgain = await ghostClient.waitFor(
+    (message) =>
+      message.room?.revival?.active &&
+      message.room.revival.selfEligible &&
+      message.room.revival.stage === 1
+  );
+  assert.equal(promptedAgain.room.revival.decision, "pending");
+  assert.equal(nextHand.room.game.handNo, promptedAgain.room.game.handNo);
+
+  hostClient.close();
+  guestClient.close();
+  ghostClient.close();
+});
+
+test("reconnecting restores the revival prompt and timeout defaults to spectator", async (t) => {
+  const server = await startServer({ revivalWindowMs: 450 });
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "超时房主", 3);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "超时访客");
+  const ghostJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "断线回溯者");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  const ghostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    ghostJoin.payload.token
+  );
+  hostClient.send({ type: "host:start" });
+  await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
+  );
+
+  const room = server.app.rooms.get(hostRoom.roomCode);
+  const ghost = room.users.get(ghostJoin.payload.userId);
+  const ghostSeat = ghost.seat;
+  room.game.players[ghost.seat].eliminated = true;
+  room.game.players[ghost.seat].stack = 0;
+  room.game.phase = "complete";
+  room.game.summary = {
+    outrightWinner: 0,
+    winners: [0],
+    awards: [{ playerIndex: 0, amount: 10 }]
+  };
+  room.game.tableOver = null;
+  handleCompletedHand(room);
+  hostClient.send({ type: "host:start" });
+  await ghostClient.waitFor((message) => message.room?.revival?.active);
+  ghostClient.close();
+
+  const reconnected = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    ghostJoin.payload.token
+  );
+  const restored = await reconnected.waitFor(
+    (message) =>
+      message.room?.revival?.active &&
+      message.room.revival.selfEligible &&
+      message.room.revival.decision === "pending"
+  );
+  assert.equal(restored.room.revival.stage, 1);
+
+  await hostClient.waitFor(
+    (message) => message.room?.game?.presentation?.kind === "initial",
+    { timeout: 2000 }
+  );
+  assert.equal(ghost.eliminated, true);
+  assert.equal(ghost.rewindEligible, true);
+  assert.equal(ghost.stack, 0);
+  assert.equal(ghost.seat, ghostSeat);
+
+  hostClient.close();
+  guestClient.close();
+  reconnected.close();
+});
+
+test("the final revival choice ends the table when nobody accepts", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+
+  const hostRoom = await createRoom(server.baseUrl, "终局房主", 2);
+  const guestJoin = await joinRoom(server.baseUrl, hostRoom.roomCode, "终局访客");
+  const hostClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    hostRoom.token
+  );
+  const guestClient = await createClient(
+    server.baseUrl,
+    hostRoom.roomCode,
+    guestJoin.payload.token
+  );
+  hostClient.send({ type: "host:start" });
+  await hostClient.waitFor(
+    (message) =>
+      message.room?.game?.phase === "bet1" &&
+      !message.room.game.presentation
+  );
+  const room = server.app.rooms.get(hostRoom.roomCode);
+  const guest = room.users.get(guestJoin.payload.userId);
+  const guestSeat = guest.seat;
+  room.game.players[guest.seat].eliminated = true;
+  room.game.players[guest.seat].stack = 0;
+  room.game.phase = "complete";
+  room.game.summary = {
+    outrightWinner: 0,
+    winners: [0],
+    awards: [{ playerIndex: 0, amount: 10 }]
+  };
+  room.game.tableOver = {
+    status: "won",
+    winnerId: hostRoom.userId,
+    winnerName: "终局房主",
+    reason: "终局房主成为最后的赢家"
+  };
+  handleCompletedHand(room);
+  assert.equal(room.game.tableOver, null);
+
+  hostClient.send({ type: "host:start" });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(room.revivalWindow.final, true);
+  guestClient.send({ type: "revival:decide", accept: false });
+  const ended = await hostClient.waitFor(
+    (message) => message.room?.status === "matchOver"
+  );
+  assert.equal(ended.room.game.tableOver.winnerId, hostRoom.userId);
+  assert.equal(guest.rewindEligible, true);
+  assert.equal(guest.seat, guestSeat);
+
+  hostClient.close();
+  guestClient.close();
 });
 
 test("permanent host links verify and can create multiple rooms", async (t) => {

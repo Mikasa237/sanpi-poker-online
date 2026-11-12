@@ -276,7 +276,7 @@ test("side pots use eligibility layers and return uncalled excess", () => {
   );
 });
 
-test("equal winners leave the whole pot for the next hand", () => {
+test("equal winners split the pot immediately", () => {
   const state = Engine.createGame({ seed: 505, playerCount: 4 });
   state.dealerIndex = 0;
   state.players.forEach((player) => {
@@ -292,9 +292,42 @@ test("equal winners leave the whole pot for the next hand", () => {
     { 0: tied, 2: tied },
     null
   );
-  assert.deepEqual(result.awards, []);
-  assert.equal(result.carriedAmount, 110);
-  assert.equal(state.players[0].stack + state.players[2].stack, 0);
+  assert.deepEqual(
+    result.awards.map((award) => [award.playerIndex, award.amount]),
+    [[2, 55], [0, 55]]
+  );
+  assert.deepEqual(result.settlements[0].winners, [2, 0]);
+  assert.equal(result.settlements[0].carried, false);
+  assert.equal(state.players[0].stack + state.players[2].stack, 110);
+});
+
+test("a tied side-pot layer is split immediately", () => {
+  const state = Engine.createGame({ seed: 506, playerCount: 3 });
+  state.players.forEach((player) => {
+    player.stack = 0;
+    player.folded = false;
+    player.handContribution = 0;
+  });
+  state.players[0].handContribution = 50;
+  state.players[1].handContribution = 100;
+  state.players[2].handContribution = 100;
+  const result = Engine.settlePots(
+    state,
+    {
+      0: { key: [1, 50] },
+      1: { key: [1, 40] },
+      2: { key: [1, 40] }
+    },
+    null
+  );
+  assert.equal(state.players[0].stack, 150);
+  assert.equal(state.players[1].stack, 50);
+  assert.equal(state.players[2].stack, 50);
+  assert.equal(
+    result.awards.reduce((sum, award) => sum + award.amount, 0),
+    250
+  );
+  assert.equal(result.settlements.some((settlement) => settlement.carried), false);
 });
 
 test("1000 automated hands always terminate with legal cards and chips", () => {
@@ -604,7 +637,7 @@ test("a unique winner collects the carried pot and resets it", () => {
   assert.equal(state.summary.awards[0].amount, 295);
 });
 
-test("a tied showdown carries the previous pot and the current pot forward", () => {
+test("a tied showdown includes the legacy pot and splits immediately", () => {
   const state = Engine.createGame({
     seed: 1108,
     mode: "online",
@@ -637,9 +670,18 @@ test("a tied showdown carries the previous pot and the current pot forward", () 
   Engine.performAction(state, { type: "call" });
   Engine.performAction(state, { type: "call" });
   assert.equal(state.summary.outrightWinner, null);
-  assert.deepEqual(state.summary.awards, []);
-  assert.equal(state.carryPot, 295);
-  assert.equal(state.summary.carryPotOut, 295);
+  assert.equal(state.summary.tiedShowdown, true);
+  assert.equal(state.summary.awards.length, 2);
+  assert.equal(
+    state.summary.awards.reduce((sum, award) => sum + award.amount, 0),
+    295
+  );
+  assert.deepEqual(
+    state.summary.awards.map((award) => award.amount).sort((a, b) => a - b),
+    [147, 148]
+  );
+  assert.equal(state.carryPot, 0);
+  assert.equal(state.summary.carryPotOut, 0);
 });
 
 test("public-information equity sums to 100 without peeking at opponent holes", () => {
