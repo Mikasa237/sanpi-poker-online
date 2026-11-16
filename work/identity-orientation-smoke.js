@@ -73,6 +73,54 @@ async function waitUntil(predicate, label, timeoutMs = 10000) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
+async function assertStaticMobileProfile(browser, options, label) {
+  const context = await browser.newContext(options);
+  const profilePage = await context.newPage();
+  await profilePage.goto(`${BASE}/online.html`);
+  await profilePage.evaluate(() => localStorage.clear());
+  await profilePage.reload();
+  await profilePage.locator("#entryScreen").waitFor({
+    state: "visible",
+    timeout: 10000
+  });
+  const lite = await profilePage.evaluate(() => ({
+    bodyClass: document.body.classList.contains("performance-lite"),
+    htmlClass: document.documentElement.classList.contains("performance-lite"),
+    noMotion: document.body.classList.contains("no-motion"),
+    ambientDisplay: getComputedStyle(document.querySelector(".ambient")).display,
+    loadingAnimation: getComputedStyle(
+      document.querySelector(".loading-mark")
+    ).animationName
+  }));
+  assert.equal(lite.bodyClass, true, `${label} body profile`);
+  assert.equal(lite.htmlClass, true, `${label} html profile`);
+  assert.equal(lite.noMotion, true, `${label} no-motion`);
+  assert.equal(lite.ambientDisplay, "none", `${label} ambient hidden`);
+  assert.equal(lite.loadingAnimation, "none", `${label} CSS animation`);
+
+  await profilePage.evaluate(() => {
+    localStorage.setItem(
+      "sanpi-online-preferences",
+      JSON.stringify({
+        sound: true,
+        motion: true,
+        performanceMode: "full",
+        localChatMuted: false
+      })
+    );
+  });
+  await profilePage.reload();
+  await profilePage.locator("#entryScreen").waitFor({ state: "visible" });
+  assert.equal(
+    await profilePage.evaluate(() =>
+      document.body.classList.contains("performance-lite")
+    ),
+    false,
+    `${label} saved full mode should be respected`
+  );
+  await context.close();
+}
+
 async function assertUprightHandCards(page, label) {
   await page.waitForFunction(
     () => document.querySelector("#onlinePhaseText")?.textContent.includes("下注"),
@@ -262,6 +310,41 @@ async function main() {
   );
   await assertUprightHandCards(page, "390x844 portrait");
 
+  await page.locator("#onlineMotionToggle").click();
+  const liteGame = await page.evaluate(() => ({
+    bodyClass: document.body.classList.contains("performance-lite"),
+    noMotion: document.body.classList.contains("no-motion"),
+    turnAnimation: getComputedStyle(
+      document.querySelector("#onlineTurnAlert")
+    ).animationName,
+    backdrop: getComputedStyle(
+      document.querySelector("#mobileToolsBackdrop")
+    ).backdropFilter,
+    flightCards: document.querySelectorAll(".dealing-flight-card").length
+  }));
+  assert.equal(liteGame.bodyClass, true);
+  assert.equal(liteGame.noMotion, true);
+  assert.equal(liteGame.turnAnimation, "none");
+  assert.equal(liteGame.backdrop, "none");
+  assert.equal(liteGame.flightCards, 0);
+  assert.equal(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("sanpi-online-preferences"))
+          .performanceMode
+    ),
+    "lite"
+  );
+  await page.locator("#onlineMotionToggle").click();
+  assert.equal(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("sanpi-online-preferences"))
+          .performanceMode
+    ),
+    "full"
+  );
+
   await assertNoHorizontalScroll(page, "390x844 portrait");
   assert.equal(
     await page.locator("#mobileOrientationButton").isVisible(),
@@ -355,6 +438,31 @@ async function main() {
   await assertNoHorizontalScroll(legacyPage, "320x700 identity entry");
   await legacyContext.close();
 
+  await assertStaticMobileProfile(
+    browser,
+    {
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3,
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    },
+    "iOS Safari"
+  );
+  await assertStaticMobileProfile(
+    browser,
+    {
+      viewport: { width: 360, height: 780 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3,
+      userAgent:
+        "Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1 Mobile HuaweiBrowser/14.0"
+    },
+    "HarmonyOS ArkWeb"
+  );
+
   const revivalRoomCode = page.url().split("/").pop();
   const room = runningApp.rooms.get(revivalRoomCode);
   const host = room.users.get(room.hostId);
@@ -415,6 +523,7 @@ async function main() {
       identityReset: "room sessions cleared, host token preserved",
       legacyProfileMigration: "name and avatar prefilled",
       revivalUi: "prompt shown before deal and full stack restored",
+      staticProfiles: ["iOS Safari", "HarmonyOS ArkWeb"],
       orientations: ["auto", "portrait", "landscape"],
       landscapeSeats: 9,
       errors

@@ -4,6 +4,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const zlib = require("node:zlib");
 const { WebSocketServer, WebSocket } = require("ws");
 const Engine = require("./engine.js");
 
@@ -53,6 +54,8 @@ const MIME_TYPES = {
   ".ico": "image/x-icon",
   ".json": "application/json; charset=utf-8"
 };
+const STATIC_COMPRESSION_CACHE = new Map();
+const MAX_STATIC_COMPRESSION_CACHE = 32;
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
@@ -2169,7 +2172,7 @@ function createGameServer(options = {}) {
           requestUrl.pathname === "/" ||
           requestUrl.pathname === "/index.html"
         ) {
-          serveFile(response, path.join(ROOT, "index.html"));
+          serveFile(request, response, path.join(ROOT, "index.html"));
           return;
         }
         if (
@@ -2179,7 +2182,7 @@ function createGameServer(options = {}) {
           requestUrl.pathname === "/host/" ||
           /^\/room\/[A-Z0-9]{6}\/?$/.test(requestUrl.pathname)
         ) {
-          serveFile(response, path.join(ROOT, "online.html"));
+          serveFile(request, response, path.join(ROOT, "online.html"));
           return;
         }
         if (requestUrl.pathname === "/favicon.ico") {
@@ -2198,7 +2201,7 @@ function createGameServer(options = {}) {
         if (safePath && fs.existsSync(staticPath)) {
           const stats = fs.statSync(staticPath);
           if (stats.isFile()) {
-            serveFile(response, staticPath);
+            serveFile(request, response, staticPath);
             return;
           }
         }
@@ -2224,16 +2227,71 @@ function createGameServer(options = {}) {
     });
   }
 
-  function serveFile(response, filePath) {
+  function acceptsEncoding(header, name) {
+    return String(header || "")
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .some((entry) => {
+        const [encoding, ...parameters] = entry.split(";");
+        if (encoding !== name) {
+          return false;
+        }
+        return !parameters.some((parameter) =>
+          /^q=0(?:\.0*)?$/.test(parameter.trim())
+        );
+      });
+  }
+
+  function compressedStaticFile(filePath, data, mtimeMs, encoding) {
+    const cacheKey = `${filePath}:${mtimeMs}:${encoding}`;
+    const cached = STATIC_COMPRESSION_CACHE.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const compressed =
+      encoding === "br"
+        ? zlib.brotliCompressSync(data, {
+            params: {
+              [zlib.constants.BROTLI_PARAM_QUALITY]: 4
+            }
+          })
+        : zlib.gzipSync(data, { level: 6 });
+    if (STATIC_COMPRESSION_CACHE.size >= MAX_STATIC_COMPRESSION_CACHE) {
+      STATIC_COMPRESSION_CACHE.delete(
+        STATIC_COMPRESSION_CACHE.keys().next().value
+      );
+    }
+    STATIC_COMPRESSION_CACHE.set(cacheKey, compressed);
+    return compressed;
+  }
+
+  function serveFile(request, response, filePath) {
     const extension = path.extname(filePath).toLowerCase();
-    const data = fs.readFileSync(filePath);
-    response.writeHead(200, {
+    const stats = fs.statSync(filePath);
+    let data = fs.readFileSync(filePath);
+    const headers = {
       ...SECURITY_HEADERS,
       "content-type": MIME_TYPES[extension] || "application/octet-stream",
       "cache-control":
         extension === ".html" || extension === ".js" || extension === ".css"
           ? "no-cache"
-          : "public, max-age=300",
+          : "public, max-age=300"
+    };
+    const compressible = /^\.(?:html|js|css|svg|json)$/i.test(extension);
+    if (compressible && data.length >= 512) {
+      const accepted = request.headers["accept-encoding"];
+      if (acceptsEncoding(accepted, "br")) {
+        data = compressedStaticFile(filePath, data, stats.mtimeMs, "br");
+        headers["content-encoding"] = "br";
+        headers.vary = "accept-encoding";
+      } else if (acceptsEncoding(accepted, "gzip")) {
+        data = compressedStaticFile(filePath, data, stats.mtimeMs, "gzip");
+        headers["content-encoding"] = "gzip";
+        headers.vary = "accept-encoding";
+      }
+    }
+    response.writeHead(200, {
+      ...headers,
       "content-length": data.length
     });
     response.end(data);

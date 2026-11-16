@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const http = require("node:http");
 const path = require("node:path");
 const { WebSocket } = require("../outputs/node_modules/ws");
 const Engine = require("../outputs/engine.js");
@@ -45,6 +47,27 @@ async function request(baseUrl, route, body, headers = {}) {
   });
   const payload = await response.json();
   return { response, payload };
+}
+
+function getRaw(baseUrl, route, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const request = http.get(
+      new URL(route, baseUrl),
+      { headers },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          resolve({
+            status: response.statusCode,
+            headers: response.headers,
+            body: Buffer.concat(chunks)
+          });
+        });
+      }
+    );
+    request.on("error", reject);
+  });
 }
 
 async function createRoom(baseUrl, name = "房主", seatCap = 4) {
@@ -1344,4 +1367,31 @@ test("permanent host links verify and can create multiple rooms", async (t) => {
   assert.equal(afterRestart.response.status, 200);
   assert.equal(afterRestart.payload.ownerId, created.payload.ownerId);
   await restarted.app.close();
+});
+
+test("static assets negotiate Brotli and gzip compression", async (t) => {
+  const server = await startServer();
+  t.after(() => server.app.close());
+  const sourceSize = fs.statSync(
+    path.join(__dirname, "..", "outputs", "online.js")
+  ).size;
+
+  const brotli = await getRaw(server.baseUrl, "/online.js", {
+    "accept-encoding": "br, gzip"
+  });
+  assert.equal(brotli.status, 200);
+  assert.equal(brotli.headers["content-encoding"], "br");
+  assert.match(brotli.headers.vary, /accept-encoding/i);
+  assert.ok(brotli.body.length < sourceSize);
+
+  const gzip = await getRaw(server.baseUrl, "/online.js", {
+    "accept-encoding": "gzip"
+  });
+  assert.equal(gzip.status, 200);
+  assert.equal(gzip.headers["content-encoding"], "gzip");
+  assert.ok(gzip.body.length < sourceSize);
+
+  const identity = await getRaw(server.baseUrl, "/online.js");
+  assert.equal(identity.status, 200);
+  assert.equal(identity.headers["content-encoding"], undefined);
 });

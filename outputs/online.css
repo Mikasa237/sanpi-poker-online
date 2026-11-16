@@ -2504,3 +2504,102 @@
 .online-table-shell .hero-card-label {
   min-height: 2.4em;
 }
+
+/* iOS Safari and HarmonyOS WebViews use a static, low-paint mode by default. */
+body.no-motion *,
+body.no-motion *::before,
+body.no-motion *::after {
+  scroll-behavior: auto !important;
+  animation: none !important;
+  transition: none !important;
+}
+
+html.performance-lite .ambient,
+body.performance-lite .ambient,
+body.performance-lite .shuffle-ceremony {
+  display: none !important;
+}
+
+body.performance-lite::before,
+body.performance-lite .thinking-orbit span {
+  display: none;
+}
+
+body.performance-lite *,
+body.performance-lite *::before,
+body.performance-lite *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
+
+body.performance-lite .flying-emote,
+body.performance-lite .dealing-flight-card,
+body.performance-lite .joker-art,
+body.performance-lite .seat.is-current,
+body.performance-lite .human-hand-card.is-current {
+  filter: none !important;
+}
+
+body.performance-lite .mobile-drawer-backdrop {
+  background: rgba(8, 11, 9, 0.88);
+}
+
+body.performance-lite .orientation-prompt {
+  background: rgba(5, 12, 9, 0.98);
+}
+
+body.performance-lite .rules-dialog::backdrop {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: rgba(7, 5, 4, 0.9);
+}
+
+body.performance-lite .turn-alert,
+body.performance-lite .seat.is-current,
+body.performance-lite .human-hand-card.is-current {
+  box-shadow:
+    0 0 0 2px rgba(240, 207, 138, 0.72),
+    0 8px 20px rgba(0, 0, 0, 0.3);
+}
+
+.online-body button,
+.online-body summary,
+.online-body input[type="range"] {
+  touch-action: manipulation;
+}
+
+.online-table-shell .seat-layer,
+.online-action-dock,
+.online-more-tools,
+.chat-messages {
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 720px) {
+  .online-room {
+    height: 100vh;
+    height: -webkit-fill-available;
+    height: 100dvh;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    overscroll-behavior: none;
+  }
+
+  .online-action-dock {
+    padding-bottom: calc(9px + env(safe-area-inset-bottom));
+  }
+
+  body.mobile-drawer-open .online-room {
+    overscroll-behavior: none;
+  }
+}
+
+@media (max-width: 1100px) and (max-height: 600px) and (orientation: landscape) {
+  .online-room {
+    height: 100vh;
+    height: -webkit-fill-available;
+    height: 100dvh;
+    padding-bottom: calc(7px + env(safe-area-inset-bottom));
+  }
+}

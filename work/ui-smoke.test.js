@@ -90,3 +90,17 @@ test("quick phrase voice pack is referenced without remote runtime assets", () =
   assert.match(onlineApp, /quick-wow\.mp3/);
   assert.doesNotMatch(onlineApp, /https?:\/\/[^"']+\.mp3/);
 });
+
+test("mobile performance mode covers iOS and HarmonyOS with static fallbacks", () => {
+  const onlineCss = fs.readFileSync(path.join(root, "online.css"), "utf8");
+  assert.match(onlineApp, /HarmonyOS\|OpenHarmony\|ArkWeb/);
+  assert.match(onlineApp, /PREFERS_STATIC_BY_DEFAULT/);
+  assert.match(onlineApp, /performanceMode/);
+  assert.match(onlineApp, /requestAnimationFrame/);
+  assert.match(onlineCss, /body\.performance-lite/);
+  assert.match(onlineCss, /body\.no-motion/);
+  assert.match(onlineCss, /backdrop-filter: none !important/);
+  assert.match(onlineHtml, /styles\.css\?v=11/);
+  assert.match(onlineHtml, /online\.css\?v=11/);
+  assert.match(onlineHtml, /online\.js\?v=11/);
+});

@@ -9,6 +9,20 @@
   const HOST_TOKEN_KEY = "sanpi-online-host-token";
   const IDENTITY_KEY = "sanpi-online-identity-v1";
   const ORIENTATION_KEY = "sanpi-online-orientation";
+  const NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN");
+  const CLOCK_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+  const DEVICE_USER_AGENT = navigator.userAgent || "";
+  const IS_IOS =
+    /iPad|iPhone|iPod/i.test(DEVICE_USER_AGENT) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const IS_HARMONY =
+    /HarmonyOS|OpenHarmony|ArkWeb/i.test(DEVICE_USER_AGENT) ||
+    (/HuaweiBrowser/i.test(DEVICE_USER_AGENT) &&
+      /Mobile|Tablet/i.test(DEVICE_USER_AGENT));
+  const PREFERS_STATIC_BY_DEFAULT = IS_IOS || IS_HARMONY;
   const QUICK_VOICE_FILES = Object.freeze({
     hurry: "/assets/voice/quick-hurry.mp3",
     call: "/assets/voice/quick-call.mp3",
@@ -119,8 +133,11 @@
     preferences: {
       sound: true,
       motion: true,
+      performanceMode: PREFERS_STATIC_BY_DEFAULT ? "lite" : "full",
       localChatMuted: false
     },
+    pageHidden: false,
+    renderFrame: null,
     activeSocialTab: "equity",
     unreadChat: 0,
     lastPresentationSequence: 0,
@@ -130,6 +147,12 @@
     pendingChatBubble: null,
     lastTurnAlertSignature: "",
     lastResultSignature: "",
+    lastProfileSignature: "",
+    lastSeatRosterSignature: "",
+    lastHumanRosterSignature: "",
+    seatDynamicSignatures: new Map(),
+    chatRenderSignature: "",
+    equityRenderSignature: "",
     voiceQueue: [],
     voicePlaying: false,
     voiceCache: new Map(),
@@ -342,7 +365,31 @@
   }
 
   function formatNumber(value) {
-    return new Intl.NumberFormat("zh-CN").format(Math.round(Number(value) || 0));
+    return NUMBER_FORMATTER.format(Math.round(Number(value) || 0));
+  }
+
+  function formatClock(value) {
+    return CLOCK_FORMATTER.format(new Date(value));
+  }
+
+  function performanceLite() {
+    return (
+      state.preferences.performanceMode === "lite" ||
+      !state.preferences.motion
+    );
+  }
+
+  function scheduleRender() {
+    if (state.pageHidden || !state.room) {
+      return;
+    }
+    if (state.renderFrame !== null) {
+      return;
+    }
+    state.renderFrame = window.requestAnimationFrame(() => {
+      state.renderFrame = null;
+      render();
+    });
   }
 
   function clamp(value, min, max) {
@@ -714,12 +761,23 @@
 
   function loadPreferences() {
     try {
+      const saved = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
       state.preferences = Object.assign(
         state.preferences,
-        JSON.parse(localStorage.getItem(PREF_KEY) || "{}")
+        saved
       );
+      if (!Object.prototype.hasOwnProperty.call(saved, "performanceMode")) {
+        const lite =
+          PREFERS_STATIC_BY_DEFAULT || saved.motion === false;
+        state.preferences.performanceMode = lite ? "lite" : "full";
+        state.preferences.motion = !lite;
+      }
     } catch {
       // Defaults are already loaded.
+    }
+    if (state.preferences.performanceMode !== "full") {
+      state.preferences.performanceMode = "lite";
+      state.preferences.motion = false;
     }
   }
 
@@ -1298,9 +1356,11 @@
         finalizePendingProfileUpdate();
         setConnection("connected", "已连接");
         showRoom();
-        render();
+        scheduleRender();
         playResultSoundForGame(state.room.game);
-        flushChatBubble();
+        if (!state.pageHidden) {
+          flushChatBubble();
+        }
       } else if (message.type === "room:chat") {
         handleIncomingChat(message.message);
       } else if (message.type === "room:emote") {
@@ -1308,7 +1368,9 @@
       } else if (message.type === "room:chat-history") {
         if (state.room?.chat) {
           state.room.chat.messages = message.messages;
-          renderChat();
+          if (state.activeSocialTab === "chat") {
+            renderChat(true);
+          }
         }
       } else if (message.type === "error") {
         state.pendingAction = false;
@@ -1361,7 +1423,11 @@
   }
 
   function ensureAudioContext() {
-    if (!state.preferences.sound || state.preferences.localChatMuted) {
+    if (
+      state.pageHidden ||
+      !state.preferences.sound ||
+      state.preferences.localChatMuted
+    ) {
       return null;
     }
     if (!state.audioContext) {
@@ -1402,6 +1468,9 @@
   }
 
   function playDealSound(slot) {
+    if (performanceLite()) {
+      return;
+    }
     playNoiseBurst(0.038, slot === "up" ? 0.006 : 0.0045, 1500);
     playTone(slot === "up" ? 520 : 350, 0.045, 0.011, "triangle");
   }
@@ -1468,6 +1537,9 @@
   }
 
   function playShuffleCeremonySound() {
+    if (performanceLite()) {
+      return;
+    }
     playNoiseBurst(0.28, 0.012, 1200);
     [0, 120, 240, 360].forEach((delay, index) => {
       window.setTimeout(
@@ -1529,6 +1601,7 @@
 
   function speakQuickPhrase(phraseId, text) {
     if (
+      state.pageHidden ||
       !state.preferences.sound ||
       state.preferences.localChatMuted
     ) {
@@ -1678,6 +1751,10 @@
     if (!message) {
       return;
     }
+    if (!prefsMotion()) {
+      playEmoteImpact(message.item);
+      return;
+    }
     const game = state.room?.game;
     if (!game) {
       return;
@@ -1766,7 +1843,7 @@
 
   function prefsMotion() {
     return (
-      state.preferences.motion &&
+      !performanceLite() &&
       !window.matchMedia("(prefers-reduced-motion: reduce)").matches
     );
   }
@@ -1875,8 +1952,7 @@
     return player.lastAction || "等待";
   }
 
-  function seatMarkup(player, index, ordinal, count) {
-    const position = opponentPosition(ordinal, count);
+  function seatDynamicState(player, index) {
     const isCurrent =
       ["bet1", "bet2"].includes(state.room.game.phase) &&
       state.room.game.actorIndex === index;
@@ -1914,34 +1990,68 @@
     const offline = !connected
       ? '<span class="seat-badge offline-badge" aria-label="离线">离线</span>'
       : "";
+    return {
+      classes,
+      status,
+      connected,
+      avatarUrl: rosterUser?.avatarUrl || "preset:jester",
+      cards,
+      badges: `${dealer}${offline}${turn}`,
+      stack: formatNumber(player.stack),
+      meta: `
+        <span class="seat-action">${escapeHtml(status)}</span>
+        <span class="seat-contribution">${
+          player.roundContribution
+            ? `本轮 +${formatNumber(player.roundContribution)}`
+            : `本手 ${formatNumber(player.handContribution)}`
+        }</span>
+      `
+    };
+  }
+
+  function seatDynamicSignature(player, index, dynamic) {
+    return [
+      index,
+      player.id,
+      dynamic.status,
+      dynamic.connected ? 1 : 0,
+      dynamic.stack,
+      player.hasHiddenHole ? 1 : 0,
+      player.holeCard?.id || "",
+      player.upCard?.id || "",
+      player.drawCard?.id || "",
+      player.roundContribution,
+      player.handContribution,
+      dynamic.classes
+    ].join("|");
+  }
+
+  function seatMarkup(player, index, ordinal, count) {
+    const position = opponentPosition(ordinal, count);
+    const dynamic = seatDynamicState(player, index);
     return `
       <article
-        class="${classes}"
+        class="${dynamic.classes}"
         data-seat-index="${index}"
         style="--seat-x:${position.x}%;--seat-y:${position.y}%"
-        aria-label="${escapeHtml(player.name)}，${formatNumber(player.stack)} 筹码，${escapeHtml(status)}"
+        aria-label="${escapeHtml(player.name)}，${formatNumber(
+          player.stack
+        )} 筹码，${escapeHtml(dynamic.status)}"
       >
-        <div class="seat-badge-row">${dealer}${offline}${turn}</div>
+        <div class="seat-badge-row">${dynamic.badges}</div>
         <div class="seat-topline">
-          ${avatarMarkup(rosterUser?.avatarUrl || "preset:jester")}
+          ${avatarMarkup(dynamic.avatarUrl)}
           <div class="seat-identity">
             <strong>${escapeHtml(player.name)}</strong>
-            <span>${connected ? "在线" : "离线"} · 座位 ${index + 1}</span>
+            <span>${dynamic.connected ? "在线" : "离线"} · 座位 ${index + 1}</span>
           </div>
           <div class="seat-stack">
-            <strong>${formatNumber(player.stack)}</strong>
+            <strong>${dynamic.stack}</strong>
             <span>筹码</span>
           </div>
         </div>
-        <div class="seat-cards">${cards}</div>
-        <div class="seat-meta">
-          <span class="seat-action">${escapeHtml(status)}</span>
-          <span class="seat-contribution">${
-            player.roundContribution
-              ? `本轮 +${formatNumber(player.roundContribution)}`
-              : `本手 ${formatNumber(player.handContribution)}`
-          }</span>
-        </div>
+        <div class="seat-cards">${dynamic.cards}</div>
+        <div class="seat-meta">${dynamic.meta}</div>
       </article>
     `;
   }
@@ -1963,7 +2073,7 @@
     `;
   }
 
-  function humanHandMarkup(player) {
+  function humanHandDynamicState(player) {
     const isCurrent =
       ["bet1", "bet2"].includes(state.room.game.phase) &&
       state.room.game.actorIndex === player.seat;
@@ -1975,44 +2085,76 @@
     const turn = isCurrent
       ? '<span class="hero-badge turn">你的回合</span>'
       : "";
+    const classes = [
+      "human-hand-card",
+      isCurrent ? "is-current" : "",
+      player.folded ? "is-folded" : "",
+      player.eliminated ? "is-eliminated" : ""
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const cards = [
+      heroCardSlot(player.holeCard, "hole", "底牌", "仅你可见"),
+      heroCardSlot(player.upCard, "up", "明牌", "桌面公开"),
+      heroCardSlot(
+        player.drawCard,
+        "draw",
+        "摸牌",
+        player.drawCard ? "桌面公开" : "第一轮后"
+      )
+    ].join("");
+    return {
+      classes,
+      status,
+      cards,
+      stack: formatNumber(player.stack),
+      stateMarkup: `
+        <div class="hero-badge-row">${dealer}${turn}</div>
+        <strong>${escapeHtml(status)}</strong>
+        <span>${
+          player.roundContribution
+            ? `本轮投入 ${formatNumber(player.roundContribution)}`
+            : `本手投入 ${formatNumber(player.handContribution)}`
+        }</span>
+      `
+    };
+  }
+
+  function humanDynamicSignature(player, dynamic) {
+    return [
+      player.id,
+      player.name,
+      dynamic.status,
+      dynamic.stack,
+      player.holeCard?.id || "",
+      player.upCard?.id || "",
+      player.drawCard?.id || "",
+      player.roundContribution,
+      player.handContribution,
+      dynamic.classes
+    ].join("|");
+  }
+
+  function humanHandMarkup(player) {
+    const dynamic = humanHandDynamicState(player);
+    const avatarUrl =
+      state.room.users.find((user) => user.id === player.id)?.avatarUrl ||
+      "preset:jester";
     return `
-      <article class="human-hand-card ${isCurrent ? "is-current" : ""} ${
-        player.folded ? "is-folded" : ""
-      } ${player.eliminated ? "is-eliminated" : ""}" data-seat-index="${player.seat}">
+      <article class="${dynamic.classes}" data-seat-index="${player.seat}">
         <div class="human-hand-identity">
-          ${avatarMarkup(
-            state.room.users.find((user) => user.id === player.id)?.avatarUrl ||
-              "preset:jester",
-            "human-avatar"
-          )}
+          ${avatarMarkup(avatarUrl, "human-avatar")}
           <div>
             <strong>${escapeHtml(player.name)} 的手牌</strong>
             <span>${player.eliminated ? "筹码耗尽，已退出座位" : "底牌仅你可见"}</span>
           </div>
           <div class="human-stack">
-            <strong>${formatNumber(player.stack)}</strong>
+            <strong>${dynamic.stack}</strong>
             <span>筹码</span>
           </div>
         </div>
-        <div class="hero-hand-cards">
-          ${heroCardSlot(player.holeCard, "hole", "底牌", "仅你可见")}
-          ${heroCardSlot(player.upCard, "up", "明牌", "桌面公开")}
-          ${heroCardSlot(
-            player.drawCard,
-            "draw",
-            "摸牌",
-            player.drawCard ? "桌面公开" : "第一轮后"
-          )}
-        </div>
-        <div class="human-hand-state">
-          <div class="hero-badge-row">${dealer}${turn}</div>
-          <strong>${escapeHtml(status)}</strong>
-          <span>${
-            player.roundContribution
-              ? `本轮投入 ${formatNumber(player.roundContribution)}`
-              : `本手投入 ${formatNumber(player.handContribution)}`
-          }</span>
-        </div>
+        <div class="hero-hand-cards">${dynamic.cards}</div>
+        <div class="human-hand-state">${dynamic.stateMarkup}</div>
       </article>
     `;
   }
@@ -2022,12 +2164,123 @@
     const selfIndex = findSelfGameIndex(game);
     const self = selfIndex >= 0 ? game.players[selfIndex] : null;
     const opponents = ordered.filter((entry) => entry.index !== selfIndex);
-    el.onlineSeatLayer.innerHTML = opponents
-      .map((entry, ordinal) =>
-        seatMarkup(entry.player, entry.index, ordinal, opponents.length)
-      )
-      .join("");
-    el.onlineHumanHandZone.innerHTML = self ? humanHandMarkup(self) : "";
+    const rosterSignature = opponents
+      .map((entry) => {
+        const user = state.room.users.find(
+          (candidate) => candidate.id === entry.player.id
+        );
+        return [
+          entry.index,
+          entry.player.id,
+          entry.player.name,
+          user?.avatarUrl || "preset:jester"
+        ].join(":");
+      })
+      .join("|");
+    if (
+      rosterSignature !== state.lastSeatRosterSignature ||
+      el.onlineSeatLayer.children.length !== opponents.length
+    ) {
+      el.onlineSeatLayer.innerHTML = opponents
+        .map((entry, ordinal) =>
+          seatMarkup(entry.player, entry.index, ordinal, opponents.length)
+        )
+        .join("");
+      state.lastSeatRosterSignature = rosterSignature;
+      state.seatDynamicSignatures.clear();
+    } else {
+      opponents.forEach((entry) => {
+        const article = el.onlineSeatLayer.querySelector(
+          `[data-seat-index="${entry.index}"]`
+        );
+        if (!article) {
+          return;
+        }
+        const dynamic = seatDynamicState(entry.player, entry.index);
+        const signature = seatDynamicSignature(
+          entry.player,
+          entry.index,
+          dynamic
+        );
+        if (state.seatDynamicSignatures.get(entry.index) === signature) {
+          return;
+        }
+        article.className = dynamic.classes;
+        article.setAttribute(
+          "aria-label",
+          `${entry.player.name}，${formatNumber(
+            entry.player.stack
+          )} 筹码，${dynamic.status}`
+        );
+        const badgeRow = article.querySelector(".seat-badge-row");
+        const cardRow = article.querySelector(".seat-cards");
+        const meta = article.querySelector(".seat-meta");
+        const stack = article.querySelector(".seat-stack strong");
+        const presence = article.querySelector(".seat-identity span");
+        if (badgeRow) {
+          badgeRow.innerHTML = dynamic.badges;
+        }
+        if (cardRow) {
+          cardRow.innerHTML = dynamic.cards;
+        }
+        if (meta) {
+          meta.innerHTML = dynamic.meta;
+        }
+        if (stack) {
+          stack.textContent = dynamic.stack;
+        }
+        if (presence) {
+          presence.textContent = `${
+            dynamic.connected ? "在线" : "离线"
+          } · 座位 ${entry.index + 1}`;
+        }
+        state.seatDynamicSignatures.set(entry.index, signature);
+      });
+    }
+    const humanRosterSignature = self
+      ? [
+          self.id,
+          self.name,
+          state.room.users.find((user) => user.id === self.id)?.avatarUrl || ""
+        ].join(":")
+      : "";
+    if (
+      humanRosterSignature !== state.lastHumanRosterSignature ||
+      !el.onlineHumanHandZone.querySelector(".human-hand-card")
+    ) {
+      el.onlineHumanHandZone.innerHTML = self ? humanHandMarkup(self) : "";
+      state.lastHumanRosterSignature = humanRosterSignature;
+    } else if (self) {
+      const article = el.onlineHumanHandZone.querySelector(".human-hand-card");
+      const dynamic = humanHandDynamicState(self);
+      const signature = humanDynamicSignature(self, dynamic);
+      if (article.dataset.dynamicSignature !== signature) {
+        article.className = dynamic.classes;
+        const cardRow = article.querySelector(".hero-hand-cards");
+        const stateRow = article.querySelector(".human-hand-state");
+        const stack = article.querySelector(".human-stack strong");
+        const handNote = article.querySelector(
+          ".human-hand-identity > div:nth-child(2) span"
+        );
+        if (cardRow) {
+          cardRow.innerHTML = dynamic.cards;
+        }
+        if (stateRow) {
+          stateRow.innerHTML = dynamic.stateMarkup;
+        }
+        if (stack) {
+          stack.textContent = dynamic.stack;
+        }
+        if (handNote) {
+          handNote.textContent = self.eliminated
+            ? "筹码耗尽，已退出座位"
+            : self.folded
+              ? "本手已弃牌"
+              : "底牌仅你可见";
+        }
+        article.dataset.dynamicSignature = signature;
+      }
+    }
     el.onlineHumanHandZone.hidden = !self;
     el.spectatorNotice.hidden = Boolean(self);
     el.onlineTableShell.classList.toggle(
@@ -2065,6 +2318,11 @@
   function setMobileToolsOpen(open) {
     state.mobileToolsOpen = Boolean(open);
     syncMobileDrawers();
+    if (state.mobileToolsOpen && state.room?.game) {
+      renderHostControls();
+      renderChat();
+      renderEquity(state.room.game);
+    }
   }
 
   function syncMobileDrawers() {
@@ -2239,7 +2497,7 @@
 
   function renderShuffleCeremony(game) {
     const active = game?.presentation?.stage === "reshuffle";
-    el.onlineShuffleCeremony.hidden = !active;
+    el.onlineShuffleCeremony.hidden = !active || performanceLite();
     if (!active) {
       state.lastShuffleCeremonyKey = "";
       return;
@@ -2654,6 +2912,15 @@
   }
 
   function renderHostControls() {
+    const compactToolsHidden =
+      !state.mobileToolsOpen &&
+      (window.matchMedia("(max-width: 720px)").matches ||
+        window.matchMedia(
+          "(max-width: 1100px) and (max-height: 600px) and (orientation: landscape)"
+        ).matches);
+    if (compactToolsHidden) {
+      return;
+    }
     const room = state.room;
     const game = room?.game;
     const isHost = room.self?.isHost;
@@ -2712,6 +2979,9 @@
     if (!equityActive) {
       state.unreadChat = 0;
       renderChatUnread();
+      renderChat(true);
+    } else if (state.room?.game) {
+      renderEquity(state.room.game, true);
     }
   }
 
@@ -2719,11 +2989,40 @@
     return item === "egg" ? "🥚 鸡蛋" : item === "tomato" ? "🍅 番茄" : "🌹 鲜花";
   }
 
-  function renderChat() {
+  function renderChat(force = false) {
     const chat = state.room?.chat;
     if (!chat) {
       return;
     }
+    if (state.activeSocialTab !== "chat" && !force) {
+      return;
+    }
+    const messages = chat.messages || [];
+    const signature = [
+      chat.enabled ? 1 : 0,
+      chat.muted ? 1 : 0,
+      state.room.self?.id || "",
+      state.room.users
+        .map(
+          (user) =>
+            `${user.id}:${user.name}:${user.avatarUrl || ""}:${
+              user.connected ? 1 : 0
+            }:${user.chatMuted ? 1 : 0}`
+        )
+        .join(","),
+      messages
+        .map(
+          (message) =>
+            `${message.id}:${message.userId || ""}:${message.targetId || ""}:${
+              message.kind || ""
+            }:${message.text || ""}`
+        )
+        .join(",")
+    ].join("|");
+    if (!force && signature === state.chatRenderSignature) {
+      return;
+    }
+    state.chatRenderSignature = signature;
     el.chatDisabledNotice.hidden = chat.enabled;
     el.chatInput.disabled = !chat.enabled || chat.muted;
     el.chatSendButton.disabled = !chat.enabled || chat.muted;
@@ -2770,7 +3069,6 @@
     const currentUserMap = new Map(
       state.room.users.map((user) => [user.id, user])
     );
-    const messages = chat.messages || [];
     el.chatMessages.innerHTML = messages.length
       ? messages
           .map((message) => {
@@ -2780,10 +3078,7 @@
                   <div class="chat-message-body">
                     <div class="chat-message-head">
                       <strong>系统</strong>
-                      <time>${new Date(message.createdAt).toLocaleTimeString(
-                        "zh-CN",
-                        { hour: "2-digit", minute: "2-digit" }
-                      )}</time>
+                      <time>${formatClock(message.createdAt)}</time>
                     </div>
                     <div class="chat-message-text">${escapeHtml(
                       message.text
@@ -2807,10 +3102,7 @@
                 <div class="chat-message-body">
                   <div class="chat-message-head">
                     <strong>${escapeHtml(sender.name)}</strong>
-                    <time>${new Date(message.createdAt).toLocaleTimeString(
-                      "zh-CN",
-                      { hour: "2-digit", minute: "2-digit" }
-                    )}</time>
+                    <time>${formatClock(message.createdAt)}</time>
                   </div>
                   <div class="chat-message-text ${
                     message.kind === "quick"
@@ -2848,9 +3140,29 @@
     });
   }
 
-  function renderEquity(game) {
+  function renderEquity(game, force = false) {
+    if (state.activeSocialTab !== "equity" && !force) {
+      return;
+    }
     const selfIndex = findSelfGameIndex(game);
     const self = selfIndex >= 0 ? game.players[selfIndex] : null;
+    const signature = JSON.stringify([
+      self?.id || "",
+      self?.holeCard?.id || "",
+      self?.upCard?.id || "",
+      self?.drawCard?.id || "",
+      game.presentation?.kind || "",
+      game.equity?.sampleCount || 0,
+      ...(game.equity?.players || []).map((entry) => [
+        entry.playerIndex,
+        game.players[entry.playerIndex]?.name || "",
+        entry.equity
+      ])
+    ]);
+    if (!force && signature === state.equityRenderSignature) {
+      return;
+    }
+    state.equityRenderSignature = signature;
     if (!self || !game.equity) {
       el.equityHandLabel.textContent = game.presentation ? "等待发牌" : "暂无估算";
       el.equitySample.textContent = "基于公开信息估算";
@@ -2886,6 +3198,12 @@
     if (!room.self) {
       return;
     }
+    const signature = `${room.self.avatarUrl || "preset:jester"}:${room.self.name}`;
+    if (signature === state.lastProfileSignature) {
+      el.selfProfileAvatar.title = room.self.name;
+      return;
+    }
+    state.lastProfileSignature = signature;
     el.selfProfileAvatar.innerHTML = "";
     renderProfileAvatar(el.selfProfileAvatar, room.self.avatarUrl);
     el.selfProfileAvatar.title = room.self.name;
@@ -3151,6 +3469,7 @@
   }
 
   function applyOnlinePreferences() {
+    const lite = performanceLite();
     el.onlineSoundToggle.setAttribute(
       "aria-pressed",
       String(state.preferences.sound)
@@ -3161,19 +3480,26 @@
       : "开启声音和语音";
     el.onlineMotionToggle.setAttribute(
       "aria-pressed",
-      String(state.preferences.motion)
+      String(!lite)
     );
-    el.onlineMotionToggle.textContent = state.preferences.motion ? "◌" : "—";
-    el.onlineMotionToggle.title = state.preferences.motion
-      ? "关闭动画"
-      : "开启动画";
+    el.onlineMotionToggle.textContent = lite ? "静" : "◌";
+    el.onlineMotionToggle.title = lite
+      ? "开启完整特效"
+      : "切换流畅模式";
     el.chatLocalMuteButton.textContent = state.preferences.localChatMuted
       ? "取消本地静音"
       : "本地静音";
-    document.body.classList.toggle(
-      "no-motion",
-      !state.preferences.motion
-    );
+    document.documentElement.classList.toggle("performance-lite", lite);
+    document.body.classList.toggle("performance-lite", lite);
+    document.body.classList.toggle("no-motion", lite);
+    if (lite) {
+      document
+        .querySelectorAll(".dealing-flight-card, .flying-emote")
+        .forEach((node) => node.remove());
+      document
+        .querySelectorAll(".card-flip-in")
+        .forEach((node) => node.classList.remove("card-flip-in"));
+    }
   }
 
   function toggleSoundPreference() {
@@ -3184,16 +3510,39 @@
   }
 
   function toggleMotionPreference() {
-    state.preferences.motion = !state.preferences.motion;
+    const nextLite = !performanceLite();
+    state.preferences.performanceMode = nextLite ? "lite" : "full";
+    state.preferences.motion = !nextLite;
     savePreferences();
     applyOnlinePreferences();
-    showToast(state.preferences.motion ? "动画已开启" : "动画已关闭");
+    state.lastSeatRosterSignature = "";
+    state.lastHumanRosterSignature = "";
+    state.lastPresentationKey = "";
+    state.lastPresentationSequence = 0;
+    state.chatRenderSignature = "";
+    state.equityRenderSignature = "";
+    scheduleRender();
+    showToast(nextLite ? "已切换为流畅模式" : "已开启完整特效");
   }
 
   function toggleLocalChatMute() {
     state.preferences.localChatMuted = !state.preferences.localChatMuted;
     savePreferences();
     applyOnlinePreferences();
+  }
+
+  function handleVisibilityChange() {
+    state.pageHidden = document.hidden;
+    if (state.pageHidden) {
+      if (state.renderFrame !== null) {
+        window.cancelAnimationFrame(state.renderFrame);
+        state.renderFrame = null;
+      }
+      state.audioContext?.suspend?.().catch(() => {});
+      return;
+    }
+    scheduleRender();
+    flushChatBubble();
   }
 
   function bindEvents() {
@@ -3514,6 +3863,7 @@
     });
     window.addEventListener("resize", scheduleOrientationUpdate);
     window.addEventListener("orientationchange", scheduleOrientationUpdate);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     screen.orientation?.addEventListener?.(
       "change",
       scheduleOrientationUpdate
@@ -3553,7 +3903,9 @@
       }
       verifyHostToken();
     }
-    state.countdownTimer = setInterval(updateCountdown, 250);
+    state.pageHidden = document.hidden;
+    state.countdownTimer = setInterval(updateCountdown, 1000);
+    updateCountdown();
     const code = routeCode();
     if (code) {
       state.roomCode = code;
